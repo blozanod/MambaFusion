@@ -1,0 +1,14 @@
+# General Settings
+name: MambaFusion
+version: 0.1
+alignment_model: PCDAlignment
+fusion_model: TSAFusion
+sr_model: MambaIRv2Model
+scale: 4
+num_gpu: 4
+manual_seed: 42
+
+# Hardware Settings
+device: cuda
+num_workers: 4
+os_backend: nccl # Options: gloo (windows), nccl (linux)
