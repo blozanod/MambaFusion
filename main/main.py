@@ -8,6 +8,8 @@ parent_dir = os.path.abspath(os.path.join(current_dir, '..'))
 # Add the parent directory to sys.path
 sys.path.append(parent_dir)
 
+from burstISP.utils import get_root_logger, get_time_str
+
 import yaml
 import argparse
 
@@ -121,10 +123,19 @@ def main():
     return 0
 
 if __name__ == "__main__":
-    logger = setup_logger("train.log")
-    logger.info("Logger initialized.")
+    timestamp = get_time_str()
+    log_file = os.path.join(current_dir, "logs", f"train_{timestamp}.log")
+    
+    logger = get_root_logger(
+        logger_name='burstISP', 
+        log_level=logging.INFO, 
+        log_file=log_file
+    )
+
+    logger.info(f"Logger initialized. Writing logs to {log_file}")
     try:
         main()
+        sys.exit(0)
     except KeyboardInterrupt:
         logger.warning("Training interrupted by user. Saving and exiting...")
         sys.exit(0)

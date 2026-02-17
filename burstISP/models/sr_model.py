@@ -4,7 +4,7 @@ from os import path as osp
 from tqdm import tqdm
 
 from burstISP.archs import build_network
-from burstISP.losses import build_loss
+from burstISP.loss import build_loss
 from burstISP.metrics import calculate_metric
 from burstISP.utils import get_root_logger, imwrite, tensor2img
 from burstISP.utils.registry import MODEL_REGISTRY

@@ -11,4 +11,4 @@ manual_seed: 42
 # Hardware Settings
 device: cuda
 num_workers: 4
-os_backend: nccl # Options: gloo (windows), nccl (linux)
+os_backend: nccl

@@ -1,10 +1,11 @@
 import torch
 from torch import nn as nn
 from torch.nn import functional as F
+from burstISP.utils.registry import ARCH_REGISTRY
 
 from burstISP.archs.arch_util import DCNv2Pack
 
-
+@ARCH_REGISTRY.register()
 class PCDAlignment(nn.Module):
     """Alignment module using Pyramid, Cascading and Deformable convolution
     (PCD). It is used in EDVR.
@@ -116,6 +117,7 @@ class PCDAlignment(nn.Module):
         return feat
     
 
+@ARCH_REGISTRY.register()
 class TSAFusion(nn.Module):
     """Temporal Spatial Attention (TSA) fusion module.
 
