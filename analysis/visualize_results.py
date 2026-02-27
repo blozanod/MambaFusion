@@ -1,3 +1,10 @@
+# --- LICENSE NOTICE FOR DERIVED CODE ---
+# Portions of this code (specifically the function 'generate_processed_image') are adapted from:
+# Copyright (c) 2021 Huawei Technologies Co., Ltd.
+# Licensed under CC BY-NC-SA 4.0 
+# Original source: https://github.com/goutamgmb/deep-burst-sr/blob/master/dataset/burstsr_dataset.py
+# --- END LICENSE NOTICE ---
+
 import os
 import cv2
 import torch
@@ -16,7 +23,7 @@ def generate_processed_image(im, meta_data, return_np=False, external_norm_facto
     if not meta_data.get('while_balance_applied', False) and not no_white_balance:
         im = im * torch.tensor(meta_data['cam_wb'])[[0, 1, -1]].view(3, 1, 1) / torch.tensor(meta_data['cam_wb'])[1]
 
-   # 3. Color Correction Matrix (CCM) - [ADDED STEP]
+   # Color Correction Matrix (CCM)
     if 'rgb_xyz_matrix' in meta_data:
         # Standard XYZ to linear sRGB conversion matrix (D65) using NumPy
         xyz2srgb = np.array([
@@ -26,7 +33,6 @@ def generate_processed_image(im, meta_data, return_np=False, external_norm_facto
         ], dtype=np.float32)
 
         # Extract XYZ -> Camera matrix from metadata
-        # The metadata matrix has 4 rows (R, G1, G2, B). We select 0, 1, 3 for our 3-channel image.
         raw_matrix = np.array(meta_data['rgb_xyz_matrix'], dtype=np.float32)
         xyz2cam = raw_matrix[[0, 1, 3], :]
 
@@ -34,8 +40,6 @@ def generate_processed_image(im, meta_data, return_np=False, external_norm_facto
         cam2xyz = np.linalg.inv(xyz2cam)
 
         # Handle White Balance interaction
-        # The image 'im' is currently White Balanced (scaled by gains).
-        # The CCM expects "Native" Camera RGB. We must undo the WB scaling.
         if not no_white_balance:
             # Slice [0, 1, 3] to grab R, G1, and B, making it a 3-element array
             wb = np.array(meta_data['cam_wb'], dtype=np.float32)[[0, 1, 3]] 
@@ -44,8 +48,7 @@ def generate_processed_image(im, meta_data, return_np=False, external_norm_facto
         else:
             inv_gains = np.eye(3, dtype=np.float32)
 
-        # Compute Combined Matrix: sRGB_pixel = M_xyz2srgb @ M_cam2xyz @ inv_WB @ WB_pixel
-        # Using NumPy's matrix multiplication operator (@)
+        # Compute Combined Matrix
         ccm = xyz2srgb @ cam2xyz @ inv_gains
 
         # Convert the final 3x3 NumPy matrix back to a tensor to apply to the image
@@ -79,15 +82,12 @@ def generate_processed_image(im, meta_data, return_np=False, external_norm_facto
     return im_out
 
 
-def main():
-    # 1. Point this to the folder containing your im_raw.png and meta_info.pkl
-    folder_path = r"C:\Users\lozan\Documents\Education\MambaFusion\dataset\022_0047_RAW"
-    
-    im_path = os.path.join(folder_path, '022_MFSR_Sony_0047_x4_rgb.png')
-    meta_path = os.path.join(folder_path, 'MFSR_Sony_0047_x4.pkl')
-    output_path = os.path.join(folder_path, 'im_processed_rgb.png')
+def process_pipeline(folder_path, im_name, meta_name, output_name, visualize=False):
+    im_path = os.path.join(folder_path, im_name)
+    meta_path = os.path.join(folder_path, meta_name)
+    output_path = os.path.join(folder_path, output_name)
 
-    # 2. Load the image exactly how the CanonImage class did it
+    # Load Image
     print(f"Loading {im_path}...")
     im_raw = cv2.imread(im_path, cv2.IMREAD_UNCHANGED)
     if im_raw is None:
@@ -97,26 +97,27 @@ def main():
     im_raw = np.transpose(im_raw, (2, 0, 1)).astype(np.int16)
     im_tensor = torch.from_numpy(im_raw).float()
 
-    # 3. Load the metadata
+    # Load Metadata
     print(f"Loading {meta_path}...")
     with open(meta_path, "rb") as f:
         meta_data = pkl.load(f)
 
-    # 4. Process the image
+    # Process Image
     print("Processing image...")
     rgb_image = generate_processed_image(im_tensor, meta_data, return_np=True)
 
-    # 5. Save the image (OpenCV expects BGR instead of RGB, so we convert before saving)
+    # 5. Save Image
     bgr_image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
     cv2.imwrite(output_path, bgr_image)
     print(f"Success! Processed image saved to: {output_path}")
 
-    # 6. Pop up a window to visualize it immediately using Matplotlib
-    plt.figure(figsize=(10, 8))
-    plt.imshow(rgb_image)
-    plt.title("Processed Canon Image (RGB)")
-    plt.axis('off')
-    plt.show()
+    # Visualize the image using Matplotlib
+    if visualize:
+        plt.figure(figsize=(10, 8))
+        plt.imshow(rgb_image)
+        plt.title("Processed Canon Image (RGB)")
+        plt.axis('off')
+        plt.show()
 
 if __name__ == '__main__':
-    main()
+    process_pipeline(folder_path = r"C:\Users\lozan\Documents\Education\MambaFusion\dataset\022_0047_RAW", im_name="022_MFSR_Sony_0047_x4_rgb.png", meta_name="MFSR_Sony_0047_x4.pkl", output_name="im_processed_rgb.png", visualize=True)
