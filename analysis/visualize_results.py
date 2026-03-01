@@ -22,8 +22,11 @@ def generate_processed_image(im, meta_data, return_np=False, external_norm_facto
 
     if not meta_data.get('while_balance_applied', False) and not no_white_balance:
         im = im * torch.tensor(meta_data['cam_wb'])[[0, 1, -1]].view(3, 1, 1) / torch.tensor(meta_data['cam_wb'])[1]
-
-   # Color Correction Matrix (CCM)
+    
+    """ TODO: Implement CCM that works for all images, different xyz2srgb matrix needs to be used, as img is already rgb
+              preferrably, matrix will either be universal or use matadata from the .pkl file to determine which matrix to use
+              
+    # Color Correction Matrix (CCM)
     if 'rgb_xyz_matrix' in meta_data:
         # Standard XYZ to linear sRGB conversion matrix (D65) using NumPy
         xyz2srgb = np.array([
@@ -59,6 +62,7 @@ def generate_processed_image(im, meta_data, return_np=False, external_norm_facto
         im_flat = im.view(C, -1)     # Flatten to (3, N)
         im_flat = torch.mm(ccm_tensor, im_flat) # Matrix Multiply
         im = im_flat.view(C, H, W)   # Reshape back
+        """
 
     im_out = im
 
@@ -115,7 +119,7 @@ def process_pipeline(folder_path, im_name, meta_name, output_name, visualize=Fal
     if visualize:
         plt.figure(figsize=(10, 8))
         plt.imshow(rgb_image)
-        plt.title("Processed Canon Image (RGB)")
+        plt.title("Processed Image (RGB)")
         plt.axis('off')
         plt.show()
 

@@ -12,3 +12,25 @@ manual_seed: 42
 device: cuda
 num_workers: 4
 os_backend: nccl
+
+# Dataset Settings
+
+
+# Network Settings
+network_mamba:
+  type: MambaIRv2
+  upscale: 4
+  in_chans: 3
+  img_size: 64
+  img_range: 1.
+  embed_dim: 174
+  d_state: 16
+  depths: [6, 6, 6,6,6,6]
+  num_heads: [6,6,6,6,6,6]
+  window_size: 16
+  inner_rank: 64
+  num_tokens: 128
+  convffn_kernel_size: 5
+  mlp_ratio: 2.
+  upsampler: 'pixelshuffle'
+  resi_connection: '1conv'
