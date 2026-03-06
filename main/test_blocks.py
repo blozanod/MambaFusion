@@ -17,6 +17,7 @@ sys.path.append(parent_dir)
 
 from burstISP.data.burst_image_dataset import BurstImageDataset
 from burstISP.archs.dcn_align_arch import BurstAlign
+from burstISP.archs.mambafusion_arch import MambaFusionNet
 
 def test_dataset(opt, visualize=False):
     print("Initializing dataset...")
@@ -97,6 +98,36 @@ def test_alignment(opt):
     except Exception as e:
         print(f"Error occurred during forward pass: \n{e}")
 
+def test_mambafusion(opt):
+    # Load Dataset
+    test_dataset = BurstImageDataset(opt)
+    test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False)
+
+    # Init CUDA
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {device}")
+
+    # Initialize BurstAlign module
+    fusion_module = MambaFusionNet(opt).to(device)
+
+    # Test forward pass with one batch
+    try:
+        batch = next(iter(test_dataloader))
+        burst = batch['lq'].to(device)  # Shape: [B, N, C, H, W]
+
+        print(f"Batch loaded successfully. Input shapes: {burst.shape}")
+    except Exception as e:
+        print(f"Error occurred during testing: {e}")
+
+    try:
+        output = fusion_module(burst)
+        print(f"Forward pass successful. Output shape: {output.shape}")
+
+        if torch.isnan(output).any():
+            print("WARNING: Output contains NaN values!")
+    except Exception as e:
+        print(f"Error occurred during forward pass: \n{e}")
+
 if __name__ == '__main__':
     # Set up path from main/test_data.py to MambaFusion/dataset folder
     data_path = os.path.join(parent_dir, 'dataset')
@@ -104,10 +135,18 @@ if __name__ == '__main__':
     # Dummy options dictionary
     opt = {
         'dataroot': data_path, 
-        'count': 5
+        'num_frames': 3,
+        'num_feat': 16,
+        'offset_groups': 4,
+        'scale': 8,
+        'depths': [3, 3, 3, 3],
+        'num_heads': [2, 2, 2, 2],
+        'mlp_ratio': 1,
+        'upsampler': 'pixelshuffledirect'
     }
 
     # test_dataset(opt, visualize=False)
-    test_alignment(opt)
+    # test_alignment(opt)
+    test_mambafusion(opt)
 
     

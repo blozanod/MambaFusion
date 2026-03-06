@@ -2,53 +2,54 @@ import torch
 import torch.nn as nn
 from burstISP.utils.registry import ARCH_REGISTRY
 from burstISP.archs.mambairv2_arch import MambaIRv2
+from burstISP.archs.dcn_align_arch import BurstAlign
 
 @ARCH_REGISTRY.register()
 class MambaFusionNet(nn.Module):
-    def __init__(self, opt):
-        """Full MambaFusion architecture for burst image restoration, including alignment, fusion, and restoration modules.
+    """Full MambaFusion architecture for burst image restoration, including alignment, fusion, and restoration modules.
 
         Args:
             opt (dict): Config for the full MambaFusionNet. Expected keys:
-                network_mamba: dict with keys for mambairv2 config:
-                    scale: 8 (supports 2, 4, 8, for RealBSR, set to 8 -> 4x upscaling due to RGGB packing)
-                    in_chans: TODO based on TSAFusion output channels
-                    img_size: 64
-                    img_range: 1.
-                    embed_dim: 174
-                    d_state: 16
-                    depths: [6,6,6,6,6,6]
-                    num_heads: [6,6,6,6,6,6]
-                    window_size: 16
-                    inner_rank: 64
-                    num_tokens: 128
-                    convffn_kernel_size: 5
-                    mlp_ratio: 2.
-                    upsampler: 'pixelshuffle'
+                num_frames: Number of frames in the burst (e.g. 5)
+                num_feat: Number of features for alignment (e.g. 64)
+                out_chans: Number of output channels (e.g. 3, different from in chans due to burst)
+                offset_groups: Number of groups for DCN offset prediction (e.g. 8)
+                scale: upscaling factor (e.g. 8 -> 4 due to packed RGGB)
+                depths: Model depth for Mamba block (e.g. [6, 6, 6, 6])
+                num_heads: Number of stages per Mamba block (e.g. [4, 4, 4, 4])
+                mlp_ratio: MLP ratio for Mamba block (e.g. 2)
+                upsampler: upsampling method for Mamba block (e.g. 'pixelshuffledirect')
         """
+    def __init__(self, opt):
         super(MambaFusionNet, self).__init__()
-        self.opt_m = opt
-        self.scale = opt.get('scale', 1)
-        self.num_frames = opt.get('num_frames', 5)
-        self.center_frame_idx = self.num_frames // 2
+        self.opt = opt
+        self.num_frames = opt['num_frames']
+        self.num_feat = opt['num_feat']
+        self.offset_groups = opt['offset_groups']
+
+        # Alignment module
+        self.alignment = BurstAlign(num_feat=self.num_feat, num_frames=self.num_frames, offset_groups=self.offset_groups)
 
         # Restoration module
-        self.restoration = MambaIRv2(num_feat=64, num_blocks=20, scale=self.scale)
+        self.restoration = MambaIRv2(
+            in_chans= self.num_frames * self.num_feat,
+            out_chans = 3, # For RGB image
+            upscale=self.opt["scale"],
+            depths=self.opt['depths'],
+            num_heads=self.opt['num_heads'],
+            mlp_ratio=self.opt['mlp_ratio'],
+            upsampler=self.opt['upsampler'],
+            use_checkpoint=False)
 
     def forward(self, x):
-        b, n, c, h, w = x.size()  # [B, N, C, H, W]
-        center_frame = x[:, self.center_frame_idx]  # [B, C, H, W]
+        # Align features from burst frames
+        aligned_burst = self.alignment(x)  # Shape: [B, N, C, H, W]
 
-        aligned_feats = []
-        for i in range(self.num_frames):
-            if i == self.center_frame_idx:
-                aligned_feats.append(center_frame)
-            else:
-                aligned_feat = self.alignment(x[:, i], center_frame)
-                aligned_feats.append(aligned_feat)
+        # Collapse burst dimension into batch dimension for restoration
+        B, N, C, H, W = aligned_burst.shape
+        fused_input = aligned_burst.view(B, N * C, H, W)  # Shape: [B, N * C, H, W]
 
-        aligned_feats = torch.stack(aligned_feats, dim=1)  # [B, N, C, H, W]
-        fused_feat = self.fusion(aligned_feats)  # [B, C, H, W]
-        output = self.restoration(fused_feat)  # [B, C*scale^2, H*scale, W*scale]
+        # Restore high-quality image from fused features
+        output = self.restoration(fused_input)  # Shape: [B, C_out, H_out, W_out]
 
         return output

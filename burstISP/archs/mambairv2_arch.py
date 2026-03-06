@@ -785,6 +785,7 @@ class MambaIRv2(nn.Module):
                  img_size=64,
                  patch_size=1,
                  in_chans=3,
+                 out_chans=3,
                  embed_dim=48,
                  d_state=8,
                  depths=(6, 6, 6, 6,),
@@ -806,7 +807,7 @@ class MambaIRv2(nn.Module):
                  **kwargs):
         super().__init__()
         num_in_ch = in_chans
-        num_out_ch = in_chans
+        num_out_ch = out_chans
         num_feat = 64
         self.img_range = img_range
         if in_chans == 3:
@@ -953,7 +954,7 @@ class MambaIRv2(nn.Module):
     def calculate_rpi_sa(self):
         coords_h = torch.arange(self.window_size)
         coords_w = torch.arange(self.window_size)
-        coords = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, Wh, Ww
+        coords = torch.stack(torch.meshgrid([coords_h, coords_w], indexing='ij'))  # 2, Wh, Ww
         coords_flatten = torch.flatten(coords, 1)  # 2, Wh*Ww
         relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # 2, Wh*Ww, Wh*Ww
         relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # Wh*Ww, Wh*Ww, 2

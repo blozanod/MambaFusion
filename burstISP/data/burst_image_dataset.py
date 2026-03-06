@@ -24,7 +24,7 @@ class BurstImageDataset(data.Dataset):
         super(BurstImageDataset, self).__init__()
         self.opt = opt
         self.data_root = opt['dataroot']
-        self.count = opt.get('count', 14)
+        self.count = opt.get('num_frames', 14)
         # Gets all burst folders xxx_xxxx_RAW
         self.burst_folders = sorted(glob.glob(os.path.join(self.data_root, '*_RAW')))
 
