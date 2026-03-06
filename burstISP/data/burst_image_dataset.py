@@ -44,12 +44,15 @@ class BurstImageDataset(data.Dataset):
         lq_img_paths = sorted(glob.glob(os.path.join(burst_dir, '*_x1_*.png')))
 
         # Get indices from count random frames (sorted), and center frame index
+        true_center_idx = len(lq_img_paths) // 2
         other_indices = list(range(len(lq_img_paths)))
         other_indices.remove(len(lq_img_paths) // 2)
 
         indices = np.random.choice(other_indices, min(count - 1, len(other_indices)), replace=False)
-        indices = np.append(indices, len(lq_img_paths) // 2) # Add center frame index
         indices = sorted(indices)
+
+        half_idx = count // 2
+        indices.insert(half_idx, true_center_idx)  # Insert center frame index in the middle of the list
         
         # Get lq frames
         for idx in indices:

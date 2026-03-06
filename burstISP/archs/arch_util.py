@@ -244,107 +244,39 @@ class DCNv2Pack(ModulatedDeformConvPack):
                                      self.groups, self.deformable_groups)
 """
                                      
-class ModulatedDeformableConv2d(nn.Module):
-    """
-    Modulated Deformable Convolution as described in DCNv2:
-      "Deformable ConvNets v2: More Deformable, Better Results"
-      Zhu et al., CVPR 2019  (the paper you attached)
-
-    torchvision.ops.deform_conv2d supports the mask (modulation)
-    argument natively, so we just need to produce offsets + mask
-    from a learned side-branch convolution.
-
-    Args:
-        in_channels:  C_in
-        out_channels: C_out
-        kernel_size:  int or (H, W)
-        stride, padding, dilation, groups, bias: same as nn.Conv2d
-        offset_lr_mult: side-branch LR multiplier (paper uses 0.1)
-    """
-
-    def __init__(
-        self,
-        in_channels: int,
-        out_channels: int,
-        kernel_size: int = 3,
-        stride: int = 1,
-        padding: int = 1,
-        dilation: int = 1,
-        groups: int = 1,
-        bias: bool = True,
-        offset_lr_mult: float = 0.1,
-    ):
+class TorchModDeformConv(nn.Module):
+    """A wrapper for torchvision.ops.deform_conv2d that accepts pre-computed offsets and masks."""
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=True, deformable_groups=1):
         super().__init__()
-
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.kernel_size = (kernel_size, kernel_size) if isinstance(kernel_size, int) else kernel_size
         self.stride = stride
         self.padding = padding
         self.dilation = dilation
-        self.groups = groups
-        self.offset_lr_mult = offset_lr_mult
-
-        K = self.kernel_size[0] * self.kernel_size[1]  # e.g. 9 for 3x3
-
-        # Main convolution weights (no bias here; we handle it separately)
-        self.weight = nn.Parameter(
-            torch.empty(out_channels, in_channels // groups, *self.kernel_size)
-        )
-        self.bias = nn.Parameter(torch.zeros(out_channels)) if bias else None
-
-        # Side-branch: produces 2K offset channels + K modulation channels
-        # Zero-initialized per the paper → initial Δp=0, Δm=sigmoid(0)=0.5
-        self.offset_mask_conv = nn.Conv2d(
-            in_channels,
-            3 * K,          # 2K offsets (x,y per location) + K masks
-            kernel_size=self.kernel_size,
-            stride=stride,
-            padding=padding,
-            dilation=dilation,
-            bias=True,
-        )
-
-        self._init_weights()
-
-    def _init_weights(self):
-        # Main conv: kaiming uniform (standard)
+        
+        self.weight = nn.Parameter(torch.empty(out_channels, in_channels // groups, *self.kernel_size))
+        if bias:
+            self.bias = nn.Parameter(torch.empty(out_channels))
+        else:
+            self.register_parameter('bias', None)
+            
         nn.init.kaiming_uniform_(self.weight, nonlinearity="relu")
         if self.bias is not None:
             nn.init.zeros_(self.bias)
 
-        # Side-branch: zero-init so the network starts as standard conv
-        nn.init.zeros_(self.offset_mask_conv.weight)
-        nn.init.zeros_(self.offset_mask_conv.bias)
-
-    def _apply_lr_mult(self):
-        """
-        Call after constructing the module if you want the 0.1x LR.
-        Registers a backward hook that scales the side-branch gradients.
-        A cleaner alternative is to pass param groups to your optimizer.
-        """
-        for p in self.offset_mask_conv.parameters():
-            p.register_hook(lambda grad: grad * self.offset_lr_mult)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Produce offsets and modulation mask from the side branch
-        out = self.offset_mask_conv(x)          # (B, 3K, H, W)
-
-        K = self.kernel_size[0] * self.kernel_size[1]
-        offset = out[:, :2 * K]                 # (B, 2K, H, W)  — Δp_k
-        mask   = torch.sigmoid(out[:, 2 * K:])  # (B,  K, H, W)  — Δm_k ∈ (0,1)
-
+    def forward(self, x, offset, mask):
+        # torchvision's deform_conv2d automatically infers the number of deformable groups from the offset shape.
         return deform_conv2d(
-            input=x,
-            offset=offset,
-            weight=self.weight,
-            bias=self.bias,
-            stride=self.stride,
-            padding=self.padding,
-            dilation=self.dilation,
-            mask=mask,              # this is the modulation — without this
-        )                           # it degrades to DCNv1 behaviour
-
+            input=x, 
+            offset=offset, 
+            weight=self.weight, 
+            bias=self.bias, 
+            stride=self.stride, 
+            padding=self.padding, 
+            dilation=self.dilation, 
+            mask=mask
+        )
 
 def _no_grad_trunc_normal_(tensor, mean, std, a, b):
     # From: https://github.com/rwightman/pytorch-image-models/blob/master/timm/models/layers/weight_init.py
