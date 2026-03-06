@@ -9,9 +9,11 @@ from torch import nn as nn
 from torch.nn import functional as F
 from torch.nn import init as init
 from torch.nn.modules.batchnorm import _BatchNorm
+from torchvision.ops import deform_conv2d
 
 from burstISP.utils import get_root_logger
 
+"""
 try:
     from burstISP.dcn import (ModulatedDeformConvPack,
                                         modulated_deform_conv)
@@ -20,7 +22,7 @@ except ImportError:
           'Otherwise install BasicSR with compiling dcn.')
     ModulatedDeformConvPack = object
     modulated_deform_conv = None
-
+"""
 
 @torch.no_grad()
 def default_init_weights(module_list, scale=1, bias_fill=0, **kwargs):
@@ -213,9 +215,9 @@ def pixel_unshuffle(x, scale):
     x_view = x.view(b, c, h, scale, w, scale)
     return x_view.permute(0, 1, 3, 5, 2, 4).reshape(b, out_channel, h, w)
 
-
+"""
 class DCNv2Pack(ModulatedDeformConvPack):
-    """Modulated deformable conv for deformable alignment.
+    Modulated deformable conv for deformable alignment.
 
     Different from the official DCNv2Pack, which generates offsets and masks
     from the preceding features, this DCNv2Pack takes another different
@@ -223,7 +225,7 @@ class DCNv2Pack(ModulatedDeformConvPack):
 
     Ref:
         Delving Deep into Deformable Alignment in Video Super-Resolution.
-    """
+    
 
     def forward(self, x, feat):
         out = self.conv_offset(feat)
@@ -240,6 +242,108 @@ class DCNv2Pack(ModulatedDeformConvPack):
         return modulated_deform_conv(x, offset, mask, self.weight, self.bias,
                                      self.stride, self.padding, self.dilation,
                                      self.groups, self.deformable_groups)
+"""
+                                     
+class ModulatedDeformableConv2d(nn.Module):
+    """
+    Modulated Deformable Convolution as described in DCNv2:
+      "Deformable ConvNets v2: More Deformable, Better Results"
+      Zhu et al., CVPR 2019  (the paper you attached)
+
+    torchvision.ops.deform_conv2d supports the mask (modulation)
+    argument natively, so we just need to produce offsets + mask
+    from a learned side-branch convolution.
+
+    Args:
+        in_channels:  C_in
+        out_channels: C_out
+        kernel_size:  int or (H, W)
+        stride, padding, dilation, groups, bias: same as nn.Conv2d
+        offset_lr_mult: side-branch LR multiplier (paper uses 0.1)
+    """
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int = 3,
+        stride: int = 1,
+        padding: int = 1,
+        dilation: int = 1,
+        groups: int = 1,
+        bias: bool = True,
+        offset_lr_mult: float = 0.1,
+    ):
+        super().__init__()
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = (kernel_size, kernel_size) if isinstance(kernel_size, int) else kernel_size
+        self.stride = stride
+        self.padding = padding
+        self.dilation = dilation
+        self.groups = groups
+        self.offset_lr_mult = offset_lr_mult
+
+        K = self.kernel_size[0] * self.kernel_size[1]  # e.g. 9 for 3x3
+
+        # Main convolution weights (no bias here; we handle it separately)
+        self.weight = nn.Parameter(
+            torch.empty(out_channels, in_channels // groups, *self.kernel_size)
+        )
+        self.bias = nn.Parameter(torch.zeros(out_channels)) if bias else None
+
+        # Side-branch: produces 2K offset channels + K modulation channels
+        # Zero-initialized per the paper → initial Δp=0, Δm=sigmoid(0)=0.5
+        self.offset_mask_conv = nn.Conv2d(
+            in_channels,
+            3 * K,          # 2K offsets (x,y per location) + K masks
+            kernel_size=self.kernel_size,
+            stride=stride,
+            padding=padding,
+            dilation=dilation,
+            bias=True,
+        )
+
+        self._init_weights()
+
+    def _init_weights(self):
+        # Main conv: kaiming uniform (standard)
+        nn.init.kaiming_uniform_(self.weight, nonlinearity="relu")
+        if self.bias is not None:
+            nn.init.zeros_(self.bias)
+
+        # Side-branch: zero-init so the network starts as standard conv
+        nn.init.zeros_(self.offset_mask_conv.weight)
+        nn.init.zeros_(self.offset_mask_conv.bias)
+
+    def _apply_lr_mult(self):
+        """
+        Call after constructing the module if you want the 0.1x LR.
+        Registers a backward hook that scales the side-branch gradients.
+        A cleaner alternative is to pass param groups to your optimizer.
+        """
+        for p in self.offset_mask_conv.parameters():
+            p.register_hook(lambda grad: grad * self.offset_lr_mult)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Produce offsets and modulation mask from the side branch
+        out = self.offset_mask_conv(x)          # (B, 3K, H, W)
+
+        K = self.kernel_size[0] * self.kernel_size[1]
+        offset = out[:, :2 * K]                 # (B, 2K, H, W)  — Δp_k
+        mask   = torch.sigmoid(out[:, 2 * K:])  # (B,  K, H, W)  — Δm_k ∈ (0,1)
+
+        return deform_conv2d(
+            input=x,
+            offset=offset,
+            weight=self.weight,
+            bias=self.bias,
+            stride=self.stride,
+            padding=self.padding,
+            dilation=self.dilation,
+            mask=mask,              # this is the modulation — without this
+        )                           # it degrades to DCNv1 behaviour
 
 
 def _no_grad_trunc_normal_(tensor, mean, std, a, b):

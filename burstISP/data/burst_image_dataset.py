@@ -4,6 +4,7 @@ from burstISP.utils import imfrombytes, img2tensor
 from burstISP.utils.registry import DATASET_REGISTRY
 
 import os
+import torch
 import numpy as np
 import glob
 
@@ -23,7 +24,7 @@ class BurstImageDataset(data.Dataset):
         super(BurstImageDataset, self).__init__()
         self.opt = opt
         self.data_root = opt['dataroot']
-        self.count = opt['count'] if 'count' in opt else 14
+        self.count = opt.get('count', 14)
         # Gets all burst folders xxx_xxxx_RAW
         self.burst_folders = sorted(glob.glob(os.path.join(self.data_root, '*_RAW')))
 
@@ -40,10 +41,14 @@ class BurstImageDataset(data.Dataset):
 
         # Get lq image paths
         lq_frames = []
-        lq_img_paths = glob.glob(os.path.join(burst_dir, '*_x1_*.png'))
+        lq_img_paths = sorted(glob.glob(os.path.join(burst_dir, '*_x1_*.png')))
 
-        # Get indices from count random frames (sorted)
-        indices = np.random.choice(len(lq_img_paths), count, replace=False)
+        # Get indices from count random frames (sorted), and center frame index
+        other_indices = list(range(len(lq_img_paths)))
+        other_indices.remove(len(lq_img_paths) // 2)
+
+        indices = np.random.choice(other_indices, min(count - 1, len(other_indices)), replace=False)
+        indices = np.append(indices, len(lq_img_paths) // 2) # Add center frame index
         indices = sorted(indices)
         
         # Get lq frames
@@ -58,7 +63,7 @@ class BurstImageDataset(data.Dataset):
         img_gt = img2tensor(img_gt, bgr2rgb=True, float32=True)
         img_lqs = img2tensor(lq_frames, bgr2rgb=True, float32=True)
 
-        img_lqs = np.stack(img_lqs, axis=0) # shape: (N, C, H, W) where N is number of frames in burst
+        img_lqs = torch.stack(img_lqs, axis=0) # shape: (N, C, H, W) where N is number of frames in burst
 
         return {'lq': img_lqs, 'gt': img_gt, 'meta': {'burst_dir': burst_dir}}
     
