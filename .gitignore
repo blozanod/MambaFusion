@@ -58,6 +58,7 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+*.ini
 
 # Data and models (common for ML projects)
 *.pth

@@ -124,4 +124,4 @@ def process_pipeline(folder_path, im_name, meta_name, output_name, visualize=Fal
         plt.show()
 
 if __name__ == '__main__':
-    process_pipeline(folder_path = r"C:\Users\lozan\Documents\Education\MambaFusion\dataset\022_0047_RAW", im_name="022_MFSR_Sony_0047_x4_rgb.png", meta_name="MFSR_Sony_0047_x4.pkl", output_name="im_processed_rgb.png", visualize=True)
+    process_pipeline(folder_path = r"/home/blozanod/projects/MambaFusion/dataset/022_0047_RAW", im_name="022_MFSR_Sony_0047_x4_rgb.png", meta_name="MFSR_Sony_0047_x4.pkl", output_name="im_processed_rgb.png", visualize=True)

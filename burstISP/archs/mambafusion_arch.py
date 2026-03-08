@@ -20,7 +20,7 @@ class MambaFusionNet(nn.Module):
                 mlp_ratio: MLP ratio for Mamba block (e.g. 2)
                 upsampler: upsampling method for Mamba block (e.g. 'pixelshuffledirect')
         """
-    def __init__(self, opt):
+    def __init__(self, **opt):
         super(MambaFusionNet, self).__init__()
         self.opt = opt
         self.num_frames = opt['num_frames']
