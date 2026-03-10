@@ -10,7 +10,7 @@ datasets:
   train:
     name: RealBSR_train
     type: BurstImageDataset
-    dataroot: /path/to/dataset/RealBSR_RAW_trainpatch
+    dataroot: /home/blozanod/projects/MambaFusion/dataset/RealBSR_RAW_trainpatch
     num_frames: 5
     phase: train
     scale: 8
@@ -21,7 +21,7 @@ datasets:
   val:
     name: RealBSR_val
     type: BurstImageDataset
-    dataroot: /path/to/dataset/RealBSR_RAW_testpatch
+    dataroot: /home/blozanod/projects/MambaFusion/dataset/RealBSR_RAW_testpatch
     num_frames: 5
     phase: val
     scale: 8
@@ -29,21 +29,21 @@ datasets:
 # Network
 network_g:
   type: MambaFusionNet
-  opt:
-    num_frames: 5
-    num_feat: 64
-    offset_groups: 8
-    scale: 4
-    depths: [6, 6, 6, 6]
-    num_heads: [6, 6, 6, 6]
-    mlp_ratio: 2
-    upsampler: pixelshuffledirect
+  num_frames: 5
+  num_feat: 64
+  offset_groups: 8
+  scale: 8
+  depths: [6, 6, 6, 6]
+  num_heads: [6, 6, 6, 6]
+  mlp_ratio: 2
+  upsampler: pixelshuffledirect
 
 # Training
 path:
   pretrain_network_g: ~
   strict_load_g: true
   resume_state: ~
+  experiments_root: ~
 
 train:
   total_iter: 500000
@@ -56,7 +56,7 @@ train:
     betas: [0.9, 0.999]
 
   scheduler:
-    type: CosineAnnealingRestartsLR
+    type: CosineAnnealingRestartLR
     milestones: [150000, 250000, 400000]
     restart_weights: [1, 0.5, 0.25]
     eta_min: 1e-7
@@ -96,7 +96,3 @@ logger:
   print_freq: 100
   save_checkpoint_freq: 5000
   use_tb_logger: false
-
-# Path
-is_train: true
-dist: false

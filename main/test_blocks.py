@@ -78,7 +78,7 @@ def test_alignment(opt):
     print(f"Using device: {device}")
 
     # Initialize BurstAlign module
-    align_module = BurstAlign(num_feat=64, num_frames=opt['count'], offset_groups=8).to(device)
+    align_module = BurstAlign(num_feat=opt['num_feat'], num_frames=opt['num_frames'], offset_groups=opt['offset_groups']).to(device)
 
     # Test forward pass with one batch
     try:
@@ -108,7 +108,7 @@ def test_mambafusion(opt):
     print(f"Using device: {device}")
 
     # Initialize BurstAlign module
-    fusion_module = MambaFusionNet(opt).to(device)
+    fusion_module = MambaFusionNet(**opt).to(device)
 
     # Test forward pass with one batch
     try:

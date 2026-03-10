@@ -119,6 +119,11 @@ class SRModel(BaseModel):
             if l_style is not None:
                 l_total += l_style
                 loss_dict['l_style'] = l_style
+        # sobel loss
+        if self.cri_sobel:
+            l_sobel = self.cri_sobel(self.output, self.gt)
+            l_total += l_sobel
+            loss_dict['l_sobel'] = l_sobel
 
         l_total.backward()
         self.optimizer_g.step()

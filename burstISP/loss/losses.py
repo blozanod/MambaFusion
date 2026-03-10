@@ -494,9 +494,10 @@ class GANFeatLoss(nn.Module):
 @LOSS_REGISTRY.register()
 class SobelLoss(nn.Module):
     """Edge loss using Sobel filters."""
-    def __init__(self, reduction="mean"):
+    def __init__(self, loss_weight=1.0, reduction="mean"):
         super(SobelLoss, self).__init__()
         self.reduction = reduction
+        self.loss_weight = loss_weight
 
         # Sobel filters for edge detection
         sobel_x = torch.tensor([[-1., 0., 1.],
@@ -521,4 +522,4 @@ class SobelLoss(nn.Module):
         loss_x = F.l1_loss(grad_pred_x, grad_target_x, reduction=self.reduction)
         loss_y = F.l1_loss(grad_pred_y, grad_target_y, reduction=self.reduction)
 
-        return loss_x + loss_y
+        return (loss_x + loss_y) * self.loss_weight
