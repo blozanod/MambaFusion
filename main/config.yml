@@ -67,7 +67,7 @@ train:
         loss_weight: 1.0
         reduction: mean
       perceptual_opt:
-        type: PerceptualLoss        # note: currently commented out in losses.py — you need to uncomment it
+        type: PerceptualLoss
         layer_weights:
           relu3_4: 0.25
           relu4_4: 0.25
@@ -77,6 +77,9 @@ train:
         perceptual_weight: 0.05
         style_weight: 0.0
         criterion: l1
+      sobel_opt:
+        type: SobelLoss
+        loss_weight: 0.1
 
 # Validation
 val:

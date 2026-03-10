@@ -63,6 +63,16 @@ class SRModel(BaseModel):
         else:
             self.cri_perceptual = None
 
+        if train_opt.get('sobel_opt'):
+            self.cri_sobel = build_loss(train_opt['sobel_opt']).to(self.device)
+        else:
+            self.cri_sobel = None
+        
+        if train_opt.get('GAN_opt'):
+            self.cri_GAN = build_loss(train_opt['GAN_opt']).to(self.device)
+        else:
+            self.cri_GAN = None
+
         if self.cri_pix is None and self.cri_perceptual is None:
             raise ValueError('Both pixel and perceptual losses are None.')
 

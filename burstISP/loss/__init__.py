@@ -3,11 +3,11 @@ from copy import deepcopy
 from burstISP.utils import get_root_logger
 from burstISP.utils.registry import LOSS_REGISTRY
 from .losses import (CharbonnierLoss, GANLoss, L1Loss, MSELoss, WeightedTVLoss, g_path_regularize,
-                     gradient_penalty_loss, r1_penalty)
+                     gradient_penalty_loss, r1_penalty, PerceptualLoss, SobelLoss)
 
 __all__ = [
     'L1Loss', 'MSELoss', 'CharbonnierLoss', 'WeightedTVLoss', 'GANLoss', 'gradient_penalty_loss',
-    'r1_penalty', 'g_path_regularize'
+    'r1_penalty', 'g_path_regularize', 'SobelLoss', 'PerceptualLoss'
 ]
 
 
