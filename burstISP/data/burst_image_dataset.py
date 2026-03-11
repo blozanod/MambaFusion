@@ -68,7 +68,7 @@ class BurstImageDataset(data.Dataset):
 
         img_lqs = torch.stack(img_lqs, axis=0) # shape: (N, C, H, W) where N is number of frames in burst
 
-        return {'lq': img_lqs, 'gt': img_gt, 'meta': {'burst_dir': burst_dir}}
+        return {'lq': img_lqs, 'gt': img_gt, 'lq_path': burst_dir, 'meta': {'burst_dir': burst_dir}}
     
     def __len__(self):
         return len(self.burst_folders)

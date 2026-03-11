@@ -60,12 +60,14 @@ env/
 Thumbs.db
 *.ini
 
-# Data and models (common for ML projects)
+# Data and models
 *.pth
 *.pt
 *.ckpt
 outputs/
 runs/
+dataset/*/
+!dataset/README.md
 
 # Environment variables
 .env

@@ -1,4 +1,4 @@
-# GENERATE TIME: Mon Mar  9 22:13:22 2026
+# GENERATE TIME: Mon Mar  9 22:31:54 2026
 # CMD:
 # train.py -opt test_config.yml
 
@@ -33,7 +33,7 @@ network_g:
   num_frames: 3
   num_feat: 16
   offset_groups: 4
-  scale: 4
+  scale: 8
   depths: [2, 2]
   num_heads: [2, 2]
   embed_dim: 16
@@ -68,7 +68,7 @@ train:
 
 val:
   val_freq: 5
-  save_img: false
+  save_img: true
   metrics:
     psnr:
       type: calculate_psnr
