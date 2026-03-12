@@ -101,29 +101,30 @@ class SRModel(BaseModel):
 
     def optimize_parameters(self, current_iter):
         self.optimizer_g.zero_grad()
-        self.output = self.net_g(self.lq)
 
-        l_total = 0
-        loss_dict = OrderedDict()
-        # pixel loss
-        if self.cri_pix:
-            l_pix = self.cri_pix(self.output, self.gt)
-            l_total += l_pix
-            loss_dict['l_pix'] = l_pix
-        # perceptual loss
-        if self.cri_perceptual:
-            l_percep, l_style = self.cri_perceptual(self.output, self.gt)
-            if l_percep is not None:
-                l_total += l_percep
-                loss_dict['l_percep'] = l_percep
-            if l_style is not None:
-                l_total += l_style
-                loss_dict['l_style'] = l_style
-        # sobel loss
-        if self.cri_sobel:
-            l_sobel = self.cri_sobel(self.output, self.gt)
-            l_total += l_sobel
-            loss_dict['l_sobel'] = l_sobel
+        with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+            self.output = self.net_g(self.lq)
+            l_total = 0
+            loss_dict = OrderedDict()
+            # pixel loss
+            if self.cri_pix:
+                l_pix = self.cri_pix(self.output, self.gt)
+                l_total += l_pix
+                loss_dict['l_pix'] = l_pix
+            # perceptual loss
+            if self.cri_perceptual:
+                l_percep, l_style = self.cri_perceptual(self.output, self.gt)
+                if l_percep is not None:
+                    l_total += l_percep
+                    loss_dict['l_percep'] = l_percep
+                if l_style is not None:
+                    l_total += l_style
+                    loss_dict['l_style'] = l_style
+            # sobel loss
+            if self.cri_sobel:
+                l_sobel = self.cri_sobel(self.output, self.gt)
+                l_total += l_sobel
+                loss_dict['l_sobel'] = l_sobel
 
         l_total.backward()
         self.optimizer_g.step()

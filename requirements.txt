@@ -17,7 +17,6 @@ huggingface_hub==1.5.0
 idna==3.11
 Jinja2==3.1.6
 kiwisolver==1.4.9
-mamba-ssm @ https://github.com/state-spaces/mamba/releases/download/v2.3.0/mamba_ssm-2.3.0+cu12torch2.7cxx11abiTRUE-cp313-cp313-linux_x86_64.whl#sha256=5b9e4b42d64dd26bd885ae0044b0506aabc02aa88f79dee8ddbb1a8dcb47e72b
 markdown-it-py==4.0.0
 MarkupSafe==3.0.2
 matplotlib==3.10.8
@@ -63,3 +62,4 @@ transformers==5.3.0
 triton==3.3.0
 typer==0.24.1
 typing_extensions==4.15.0
+mamba-ssm @ https://github.com/state-spaces/mamba/releases/download/v2.3.0/mamba_ssm-2.3.0+cu12torch2.7cxx11abiTRUE-cp313-cp313-linux_x86_64.whl#sha256=5b9e4b42d64dd26bd885ae0044b0506aabc02aa88f79dee8ddbb1a8dcb47e72b
