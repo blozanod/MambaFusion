@@ -14,11 +14,18 @@ class MambaFusionNet(nn.Module):
                 num_feat: Number of features for alignment (e.g. 64)
                 out_chans: Number of output channels (e.g. 3, different from in chans due to burst)
                 offset_groups: Number of groups for DCN offset prediction (e.g. 8)
+                embed_dim:
+                d_state:
                 scale: upscaling factor (e.g. 8 -> 4 due to packed RGGB)
                 depths: Model depth for Mamba block (e.g. [6, 6, 6, 6])
                 num_heads: Number of stages per Mamba block (e.g. [4, 4, 4, 4])
+                window_size:
+                inner_rank:
+                num_tokens:
+                convffn_kernel_size:
                 mlp_ratio: MLP ratio for Mamba block (e.g. 2)
                 upsampler: upsampling method for Mamba block (e.g. 'pixelshuffledirect')
+                resi_connection:
         """
     def __init__(self, **opt):
         super(MambaFusionNet, self).__init__()
@@ -34,11 +41,18 @@ class MambaFusionNet(nn.Module):
         self.restoration = MambaIRv2(
             in_chans= self.num_frames * self.num_feat,
             out_chans = 3, # For RGB image
+            embed_dim=self.opt['embed_dim'],
+            d_state=self.opt['d_state'],
             upscale=self.opt["scale"],
             depths=self.opt['depths'],
             num_heads=self.opt['num_heads'],
+            window_size=self.opt['window_size'],
+            inner_rank=self.opt['inner_rank'],
+            num_tokens=self.opt['num_tokens'],
+            convffn_kernel_size=self.opt['convffn_kernel_size'],
             mlp_ratio=self.opt['mlp_ratio'],
             upsampler=self.opt['upsampler'],
+            resi_connection=self.opt['resi_connection'],
             use_checkpoint=False)
 
     def forward(self, x):
