@@ -67,7 +67,7 @@ train:
 
   pixel_opt:
     type: CharbonnierLoss
-    loss_weight: 1.0
+    loss_weight: 20.0
     reduction: mean
   perceptual_opt:
     type: PerceptualLoss
@@ -77,12 +77,12 @@ train:
       relu5_4: 0.5
     vgg_type: vgg19
     use_input_norm: true
-    perceptual_weight: 0.05
+    perceptual_weight: 0.5
     style_weight: 0.0
     criterion: l1
   sobel_opt:
     type: SobelLoss
-    loss_weight: 0.1
+    loss_weight: 1.0
 
 # Validation
 val:
