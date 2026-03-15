@@ -1,3 +1,7 @@
+# GENERATE TIME: Thu Mar 12 18:39:03 2026
+# CMD:
+# train.py -opt config.yml --launcher pytorch
+
 # config.yml
 name: MambaFusion_x4
 model_type: MambaFusionModel
@@ -32,18 +36,11 @@ network_g:
   num_frames: 5
   num_feat: 64
   offset_groups: 8
-  embed_dim: 174
-  d_state: 16
   scale: 8
-  depths: [6, 6, 6, 6, 6, 6]
-  num_heads: [6, 6, 6, 6, 6, 6]
-  window_size: 16
-  inner_rank: 64
-  num_tokens: 128
-  convffn_kernel_size: 5
+  depths: [6, 6, 6, 6]
+  num_heads: [6, 6, 6, 6]
   mlp_ratio: 2
-  upsampler: 'pixelshuffle'
-  resi_connection: '1conv'
+  upsampler: pixelshuffledirect
 
 # Training
 path:
@@ -53,7 +50,7 @@ path:
   experiments_root: ~
 
 train:
-  total_iter: 300000
+  total_iter: 500000
   warmup_iter: -1
 
   optim_g:
@@ -64,28 +61,29 @@ train:
 
   scheduler:
     type: CosineAnnealingRestartLR
-    periods: [50000, 150000, 250000]
+    periods: [150000, 250000, 400000]
     restart_weights: [1, 0.5, 0.25]
     eta_min: !!float 1e-7
 
   pixel_opt:
-    type: CharbonnierLoss
-    loss_weight: 1.0
-    reduction: mean
-  perceptual_opt:
-    type: PerceptualLoss
-    layer_weights:
-      relu3_4: 0.25
-      relu4_4: 0.25
-      relu5_4: 0.5
-    vgg_type: vgg19
-    use_input_norm: true
-    perceptual_weight: 0.05
-    style_weight: 0.0
-    criterion: l1
-  sobel_opt:
-    type: SobelLoss
-    loss_weight: 0.1
+      pixel_opt:
+        type: CharbonnierLoss
+        loss_weight: 1.0
+        reduction: mean
+      perceptual_opt:
+        type: PerceptualLoss
+        layer_weights:
+          relu3_4: 0.25
+          relu4_4: 0.25
+          relu5_4: 0.5
+        vgg_type: vgg19
+        use_input_norm: true
+        perceptual_weight: 0.05
+        style_weight: 0.0
+        criterion: l1
+      sobel_opt:
+        type: SobelLoss
+        loss_weight: 0.1
 
 # Validation
 val:

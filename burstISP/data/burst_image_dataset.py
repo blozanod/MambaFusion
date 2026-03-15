@@ -26,7 +26,7 @@ class BurstImageDataset(data.Dataset):
         self.data_root = opt['dataroot']
         self.count = opt.get('num_frames', 14)
         # Gets all burst folders xxx_xxxx_RAW
-        self.burst_folders = sorted(glob.glob(os.path.join(self.data_root, '*_RAW')))
+        self.burst_folders = sorted(glob.glob(os.path.join(self.data_root, '*')))
 
     def __getitem__(self, index):
         burst_dir = self.burst_folders[index]

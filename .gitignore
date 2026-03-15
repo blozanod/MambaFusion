@@ -61,6 +61,7 @@ Thumbs.db
 *.ini
 
 # Data and models
+*.zip
 *.pth
 *.pt
 *.ckpt
@@ -68,6 +69,7 @@ outputs/
 runs/
 dataset/*/
 !dataset/README.md
+*.state
 
 # Environment variables
 .env

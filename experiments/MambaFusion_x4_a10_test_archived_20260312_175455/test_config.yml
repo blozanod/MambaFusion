@@ -1,8 +1,13 @@
-# config.yml
-name: MambaFusion_x4
+# GENERATE TIME: Thu Mar 12 17:51:46 2026
+# CMD:
+# train.py -opt test_config.yml
+
+
+# train_mambafusion.yml
+name: MambaFusion_x4_a10_test
 model_type: MambaFusionModel
 scale: 8
-num_gpu: 3
+num_gpu: 1
 manual_seed: 42
 
 # Dataset
@@ -14,7 +19,7 @@ datasets:
     num_frames: 5
     phase: train
     scale: 8
-    batch_size_per_gpu: 4
+    batch_size_per_gpu: 2
     num_worker_per_gpu: 4
     dataset_enlarge_ratio: 1
 
@@ -32,18 +37,11 @@ network_g:
   num_frames: 5
   num_feat: 64
   offset_groups: 8
-  embed_dim: 174
-  d_state: 16
   scale: 8
-  depths: [6, 6, 6, 6, 6, 6]
-  num_heads: [6, 6, 6, 6, 6, 6]
-  window_size: 16
-  inner_rank: 64
-  num_tokens: 128
-  convffn_kernel_size: 5
+  depths: [6, 6, 6, 6]
+  num_heads: [6, 6, 6, 6]
   mlp_ratio: 2
-  upsampler: 'pixelshuffle'
-  resi_connection: '1conv'
+  upsampler: pixelshuffledirect
 
 # Training
 path:
@@ -53,7 +51,7 @@ path:
   experiments_root: ~
 
 train:
-  total_iter: 300000
+  total_iter: 1000
   warmup_iter: -1
 
   optim_g:
@@ -64,32 +62,33 @@ train:
 
   scheduler:
     type: CosineAnnealingRestartLR
-    periods: [50000, 150000, 250000]
+    milestones: [150000, 250000, 400000]
     restart_weights: [1, 0.5, 0.25]
-    eta_min: !!float 1e-7
+    eta_min: 1e-7
 
   pixel_opt:
-    type: CharbonnierLoss
-    loss_weight: 1.0
-    reduction: mean
-  perceptual_opt:
-    type: PerceptualLoss
-    layer_weights:
-      relu3_4: 0.25
-      relu4_4: 0.25
-      relu5_4: 0.5
-    vgg_type: vgg19
-    use_input_norm: true
-    perceptual_weight: 0.05
-    style_weight: 0.0
-    criterion: l1
-  sobel_opt:
-    type: SobelLoss
-    loss_weight: 0.1
+      pixel_opt:
+        type: CharbonnierLoss
+        loss_weight: 1.0
+        reduction: mean
+      perceptual_opt:
+        type: PerceptualLoss
+        layer_weights:
+          relu3_4: 0.25
+          relu4_4: 0.25
+          relu5_4: 0.5
+        vgg_type: vgg19
+        use_input_norm: true
+        perceptual_weight: 0.05
+        style_weight: 0.0
+        criterion: l1
+      sobel_opt:
+        type: SobelLoss
+        loss_weight: 0.1
 
 # Validation
 val:
-  val_freq: 5000
+  val_freq: 100
   save_img: false
   metrics:
     psnr:
@@ -99,6 +98,6 @@ val:
 
 # Logging
 logger:
-  print_freq: 100
-  save_checkpoint_freq: 5000
+  print_freq: 10
+  save_checkpoint_freq: 50
   use_tb_logger: false
