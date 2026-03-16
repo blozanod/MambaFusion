@@ -1,8 +1,12 @@
+# GENERATE TIME: Sun Mar 15 15:11:19 2026
+# CMD:
+# train.py -opt config.yml --launcher pytorch
+
 # config.yml
 name: MambaFusion_x4
 model_type: MambaFusionModel
 scale: 8
-num_gpu: 4
+num_gpu: 3
 manual_seed: 42
 
 # Dataset
@@ -14,7 +18,7 @@ datasets:
     num_frames: 5
     phase: train
     scale: 8
-    batch_size_per_gpu: 2
+    batch_size_per_gpu: 4
     num_worker_per_gpu: 4
     dataset_enlarge_ratio: 1
     grad_clip_norm: 1
@@ -92,7 +96,7 @@ train:
 
 # Validation
 val:
-  val_freq: 100
+  val_freq: 5000
   save_img: false
   metrics:
     psnr:

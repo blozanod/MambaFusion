@@ -67,7 +67,7 @@ class SRModel(BaseModel):
             self.cri_sobel = build_loss(train_opt['sobel_opt']).to(self.device)
         else:
             self.cri_sobel = None
-        
+
         if train_opt.get('GAN_opt'):
             self.cri_GAN = build_loss(train_opt['GAN_opt']).to(self.device)
         else:
@@ -200,6 +200,8 @@ class SRModel(BaseModel):
     def dist_validation(self, dataloader, current_iter, tb_logger, save_img):
         if self.opt['rank'] == 0:
             self.nondist_validation(dataloader, current_iter, tb_logger, save_img)
+        if self.opt['dist']:
+            torch.distributed.barrier()
 
     def nondist_validation(self, dataloader, current_iter, tb_logger, save_img):
         dataset_name = dataloader.dataset.opt['name']

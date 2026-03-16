@@ -1,3 +1,7 @@
+# GENERATE TIME: Sun Mar 15 23:37:15 2026
+# CMD:
+# train.py -opt config.yml --launcher pytorch
+
 # config.yml
 name: MambaFusion_x4
 model_type: MambaFusionModel

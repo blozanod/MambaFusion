@@ -1,3 +1,7 @@
+# GENERATE TIME: Sun Mar 15 23:33:54 2026
+# CMD:
+# train.py -opt config.yml --launcher pytorch
+
 # config.yml
 name: MambaFusion_x4
 model_type: MambaFusionModel
@@ -92,7 +96,7 @@ train:
 
 # Validation
 val:
-  val_freq: 100
+  val_freq: 5000
   save_img: false
   metrics:
     psnr:
