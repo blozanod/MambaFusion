@@ -1,0 +1,652 @@
+[W319 23:55:23.495951419 socket.cpp:755] [c10d] The client socket cannot be initialized to connect to [localhost]:29500 (errno: 97 - Address family not supported by protocol).
+[W319 23:55:33.240591082 socket.cpp:755] [c10d] The client socket cannot be initialized to connect to [localhost]:29500 (errno: 97 - Address family not supported by protocol).
+2026-03-19 23:55:33,850 INFO: 
+                   ____                  __  _________ ____ 
+                  / __ )__  ____________/ /_/  _/ ___// __ \
+                 / __  / / / / ___/ ___/ __// / \__ \/ /_/ /
+                / /_/ / /_/ / /  (__  ) /__/ / ___/ / ____/ 
+               /_____/\__,_/_/  /____/\__/___//____/_/      
+     ______                   __   __                 __      __
+    / ____/____   ____   ____/ /  / /   __  __ _____ / /__   / /
+   / / __ / __ \ / __ \ / __  /  / /   / / / // ___// //_/  / /
+  / /_/ // /_/ // /_/ // /_/ /  / /___/ /_/ // /__ / /<    /_/
+  \____/ \____/ \____/ \____/  /_____/\____/ \___//_/|_|  (_)
+    
+    
+Version Information: 
+	BasicSR: 0.0.1
+	PyTorch: 2.7.0+cu128
+	TorchVision: 0.22.0+cu128
+2026-03-19 23:55:33,850 INFO: 
+  name: MambaFusion_x4
+  model_type: MambaFusionModel
+  scale: 8
+  num_gpu: 4
+  manual_seed: 42
+  datasets:[
+    train:[
+      name: RealBSR_train
+      type: BurstImageDataset
+      dataroot: /groups/rls/blozanod/MambaFusion/dataset/RealBSR_RAW_trainpatch
+      num_frames: 5
+      phase: train
+      scale: 8
+      batch_size_per_gpu: 4
+      num_worker_per_gpu: 4
+      dataset_enlarge_ratio: 1
+      grad_clip_norm: 1
+    ]
+    val:[
+      name: RealBSR_val
+      type: BurstImageDataset
+      dataroot: /groups/rls/blozanod/MambaFusion/dataset/RealBSR_RAW_testpatch
+      num_frames: 5
+      phase: val
+      scale: 8
+    ]
+  ]
+  network_g:[
+    type: MambaFusionNet
+    num_frames: 5
+    num_feat: 64
+    offset_groups: 8
+    embed_dim: 174
+    d_state: 16
+    scale: 8
+    depths: [6, 6, 6, 6, 6, 6]
+    num_heads: [6, 6, 6, 6, 6, 6]
+    window_size: 16
+    inner_rank: 64
+    num_tokens: 128
+    convffn_kernel_size: 5
+    mlp_ratio: 2
+    upsampler: pixelshuffle
+    resi_connection: 1conv
+  ]
+  path:[
+    pretrain_network_g: None
+    strict_load_g: True
+    resume_state: None
+    experiments_root: /groups/rls/blozanod/MambaFusion/experiments/MambaFusion_x4
+    models: /groups/rls/blozanod/MambaFusion/experiments/MambaFusion_x4/models
+    training_states: /groups/rls/blozanod/MambaFusion/experiments/MambaFusion_x4/training_states
+    log: /groups/rls/blozanod/MambaFusion/experiments/MambaFusion_x4
+    visualization: /groups/rls/blozanod/MambaFusion/experiments/MambaFusion_x4/visualization
+  ]
+  train:[
+    total_iter: 300000
+    warmup_iter: 5000
+    optim_g:[
+      type: AdamW
+      lr: 0.0005
+      weight_decay: 0.0001
+      betas: [0.9, 0.99]
+      eps: 1e-06
+    ]
+    scheduler:[
+      type: CosineAnnealingRestartLR
+      periods: [50000, 125000, 200000]
+      restart_weights: [1, 0.5, 0.25]
+      eta_min: 1e-07
+    ]
+    pixel_opt:[
+      type: CharbonnierLoss
+      loss_weight: 1.0
+      reduction: mean
+    ]
+  ]
+  val:[
+    val_freq: 5000
+    save_img: False
+    metrics:[
+      psnr:[
+        type: calculate_psnr
+        crop_border: 4
+        test_y_channel: False
+      ]
+    ]
+  ]
+  logger:[
+    print_freq: 100
+    save_checkpoint_freq: 5000
+    use_tb_logger: False
+  ]
+  dist: True
+  rank: 0
+  world_size: 4
+  auto_resume: False
+  is_train: True
+  root_path: /groups/rls/blozanod/MambaFusion
+
+2026-03-19 23:55:33,875 INFO: Dataset [BurstImageDataset] - RealBSR_train is built.
+2026-03-19 23:55:33,875 INFO: Training statistics:
+	Number of train images: 20842
+	Dataset enlarge ratio: 1
+	Batch size per gpu: 4
+	World size (gpu number): 4
+	Require iter number per epoch: 1303
+	Total epochs: 231; iters: 300000.
+[W319 23:55:33.290237620 socket.cpp:755] [c10d] The client socket cannot be initialized to connect to [localhost]:29500 (errno: 97 - Address family not supported by protocol).
+[W319 23:55:33.305701046 socket.cpp:755] [c10d] The client socket cannot be initialized to connect to [localhost]:29500 (errno: 97 - Address family not supported by protocol).
+[W319 23:55:33.308538181 socket.cpp:755] [c10d] The client socket cannot be initialized to connect to [localhost]:29500 (errno: 97 - Address family not supported by protocol).
+2026-03-19 23:55:33,948 INFO: Dataset [BurstImageDataset] - RealBSR_val is built.
+2026-03-19 23:55:33,949 INFO: Number of val images/folders in RealBSR_val: 2377
+2026-03-19 23:55:34,273 INFO: Network [MambaFusionNet] is created.
+2026-03-19 23:55:34,617 INFO: Network: DistributedDataParallel - MambaFusionNet, with parameters: 24,352,559
+2026-03-19 23:55:34,617 INFO: MambaFusionNet(
+  (alignment): BurstAlign(
+    (feat_extractor_lv1): Sequential(
+      (0): Conv2d(4, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+      (1): ReLU(inplace=True)
+      (2): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+      (3): ReLU(inplace=True)
+      (4): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+      (5): ReLU(inplace=True)
+    )
+    (feat_extractor_L2): Sequential(
+      (0): Conv2d(64, 64, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
+      (1): ReLU(inplace=True)
+      (2): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+      (3): ReLU(inplace=True)
+    )
+    (offset_predictor_lv1): Sequential(
+      (0): Conv2d(128, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+      (1): ReLU(inplace=True)
+      (2): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+      (3): ReLU(inplace=True)
+      (4): Conv2d(64, 216, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+    )
+    (offset_predictor_lv2): Sequential(
+      (0): Conv2d(128, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+      (1): ReLU(inplace=True)
+      (2): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+      (3): ReLU(inplace=True)
+      (4): Conv2d(64, 216, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+    )
+    (dcn_lv1): TorchModDeformConv()
+  )
+  (restoration): MambaIRv2(
+    (conv_first): Conv2d(320, 174, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+    (patch_embed): PatchEmbed(
+      (norm): LayerNorm((174,), eps=1e-05, elementwise_affine=True)
+    )
+    (patch_unembed): PatchUnEmbed()
+    (layers): ModuleList(
+      (0-5): 6 x ASSB(
+        (patch_embed): PatchEmbed()
+        (patch_unembed): PatchUnEmbed()
+        (residual_group): BasicBlock(
+          dim=174, input_resolution=(64, 64), depth=6
+          (layers): ModuleList(
+            (0-5): 6 x AttentiveLayer(
+              (softmax): Softmax(dim=-1)
+              (lrelu): LeakyReLU(negative_slope=0.01)
+              (sigmoid): Sigmoid()
+              (norm1): LayerNorm((174,), eps=1e-05, elementwise_affine=True)
+              (norm2): LayerNorm((174,), eps=1e-05, elementwise_affine=True)
+              (norm3): LayerNorm((174,), eps=1e-05, elementwise_affine=True)
+              (norm4): LayerNorm((174,), eps=1e-05, elementwise_affine=True)
+              (wqkv): Linear(in_features=174, out_features=522, bias=True)
+              (win_mhsa): WindowAttention(
+                dim=174, window_size=(16, 16), num_heads=6, qkv_bias=True
+                (proj): Linear(in_features=174, out_features=174, bias=True)
+                (softmax): Softmax(dim=-1)
+              )
+              (assm): ASSM(
+                (selectiveScan): Selective_Scan()
+                (out_norm): LayerNorm((348,), eps=1e-05, elementwise_affine=True)
+                (act): SiLU()
+                (out_proj): Linear(in_features=348, out_features=174, bias=True)
+                (in_proj): Sequential(
+                  (0): Conv2d(174, 348, kernel_size=(1, 1), stride=(1, 1))
+                )
+                (CPE): Sequential(
+                  (0): Conv2d(348, 348, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), groups=348)
+                )
+                (embeddingB): Embedding(128, 64)
+                (route): Sequential(
+                  (0): Linear(in_features=174, out_features=58, bias=True)
+                  (1): GELU(approximate='none')
+                  (2): Linear(in_features=58, out_features=128, bias=True)
+                  (3): LogSoftmax(dim=-1)
+                )
+              )
+              (convffn1): ConvFFN(
+                (fc1): Linear(in_features=174, out_features=348, bias=True)
+                (act): GELU(approximate='none')
+                (dwconv): dwconv(
+                  (depthwise_conv): Sequential(
+                    (0): Conv2d(348, 348, kernel_size=(5, 5), stride=(1, 1), padding=(2, 2), groups=348)
+                    (1): GELU(approximate='none')
+                  )
+                )
+                (fc2): Linear(in_features=348, out_features=174, bias=True)
+              )
+              (convffn2): ConvFFN(
+                (fc1): Linear(in_features=174, out_features=348, bias=True)
+                (act): GELU(approximate='none')
+                (dwconv): dwconv(
+                  (depthwise_conv): Sequential(
+                    (0): Conv2d(348, 348, kernel_size=(5, 5), stride=(1, 1), padding=(2, 2), groups=348)
+                    (1): GELU(approximate='none')
+                  )
+                )
+                (fc2): Linear(in_features=348, out_features=174, bias=True)
+              )
+              (embeddingA): Embedding(64, 16)
+            )
+          )
+        )
+        (conv): Conv2d(174, 174, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+      )
+    )
+    (norm): LayerNorm((174,), eps=1e-05, elementwise_affine=True)
+    (conv_after_body): Conv2d(174, 174, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+    (conv_before_upsample): Sequential(
+      (0): Conv2d(174, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+      (1): LeakyReLU(negative_slope=0.01, inplace=True)
+    )
+    (upsample): Upsample(
+      (0): Conv2d(64, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+      (1): PixelShuffle(upscale_factor=2)
+      (2): Conv2d(64, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+      (3): PixelShuffle(upscale_factor=2)
+      (4): Conv2d(64, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+      (5): PixelShuffle(upscale_factor=2)
+    )
+    (conv_last): Conv2d(64, 3, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+  )
+)
+2026-03-19 23:55:34,621 INFO: Loss [CharbonnierLoss] is created.
+2026-03-19 23:55:34,624 INFO: Model [MambaFusionModel] is created.
+2026-03-19 23:56:00,970 INFO: Start training from epoch: 0, iter: 0
+[rank1]: Traceback (most recent call last):
+[rank1]:   File "/groups/rls/blozanod/MambaFusion/main/train.py", line 225, in <module>
+[rank1]:     train_pipeline(root_path)
+[rank1]:   File "/groups/rls/blozanod/MambaFusion/main/train.py", line 178, in train_pipeline
+[rank1]:     model.optimize_parameters(current_iter)
+[rank1]:   File "/groups/rls/blozanod/MambaFusion/burstISP/models/sr_model.py", line 106, in optimize_parameters
+[rank1]:     self.output = self.net_g(self.lq)
+[rank1]:                   ^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank1]:     return self._call_impl(*args, **kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank1]:     return forward_call(*args, **kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/parallel/distributed.py", line 1637, in forward
+[rank1]:     else self._run_ddp_forward(*inputs, **kwargs)
+[rank1]:          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/parallel/distributed.py", line 1464, in _run_ddp_forward
+[rank1]:     return self.module(*inputs, **kwargs)  # type: ignore[index]
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank1]:     return self._call_impl(*args, **kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank1]:     return forward_call(*args, **kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambafusion_arch.py", line 67, in forward
+[rank1]:     output = self.restoration(fused_input)  # Shape: [B, C_out, H_out, W_out]
+[rank1]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank1]:     return self._call_impl(*args, **kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank1]:     return forward_call(*args, **kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambairv2_arch.py", line 1006, in forward
+[rank1]:     x = self.conv_after_body(self.forward_features(x, params)) + x
+[rank1]:                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambairv2_arch.py", line 947, in forward_features
+[rank1]:     x = layer(x, x_size, params)
+[rank1]:         ^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank1]:     return self._call_impl(*args, **kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank1]:     return forward_call(*args, **kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambairv2_arch.py", line 645, in forward
+[rank1]:     return self.patch_embed(self.conv(self.patch_unembed(self.residual_group(x, x_size, params), x_size))) + x
+[rank1]:                                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank1]:     return self._call_impl(*args, **kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank1]:     return forward_call(*args, **kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambairv2_arch.py", line 577, in forward
+[rank1]:     x = layer(x, x_size, params)
+[rank1]:         ^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank1]:     return self._call_impl(*args, **kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank1]:     return forward_call(*args, **kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambairv2_arch.py", line 501, in forward
+[rank1]:     x_aca = self.assm(self.norm3(x), x_size, self.embeddingA) + x
+[rank1]:             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank1]:     return self._call_impl(*args, **kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank1]:     return forward_call(*args, **kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambairv2_arch.py", line 263, in forward
+[rank1]:     y = self.selectiveScan(semantic_x, prompt)
+[rank1]:         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank1]:     return self._call_impl(*args, **kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank1]:     return forward_call(*args, **kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambairv2_arch.py", line 399, in forward
+[rank1]:     y = y.permute(0, 2, 1).contiguous()
+[rank1]:         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]: torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 34.00 MiB. GPU 1 has a total capacity of 22.30 GiB of which 22.88 MiB is free. Including non-PyTorch memory, this process has 22.27 GiB memory in use. Of the allocated memory 21.30 GiB is allocated by PyTorch, and 604.86 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/groups/rls/blozanod/MambaFusion/main/train.py", line 225, in <module>
+[rank0]:     train_pipeline(root_path)
+[rank0]:   File "/groups/rls/blozanod/MambaFusion/main/train.py", line 178, in train_pipeline
+[rank0]:     model.optimize_parameters(current_iter)
+[rank0]:   File "/groups/rls/blozanod/MambaFusion/burstISP/models/sr_model.py", line 106, in optimize_parameters
+[rank0]:     self.output = self.net_g(self.lq)
+[rank0]:                   ^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/parallel/distributed.py", line 1637, in forward
+[rank0]:     else self._run_ddp_forward(*inputs, **kwargs)
+[rank0]:          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/parallel/distributed.py", line 1464, in _run_ddp_forward
+[rank0]:     return self.module(*inputs, **kwargs)  # type: ignore[index]
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambafusion_arch.py", line 67, in forward
+[rank0]:     output = self.restoration(fused_input)  # Shape: [B, C_out, H_out, W_out]
+[rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambairv2_arch.py", line 1006, in forward
+[rank0]:     x = self.conv_after_body(self.forward_features(x, params)) + x
+[rank0]:                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambairv2_arch.py", line 947, in forward_features
+[rank0]:     x = layer(x, x_size, params)
+[rank0]:         ^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambairv2_arch.py", line 645, in forward
+[rank0]:     return self.patch_embed(self.conv(self.patch_unembed(self.residual_group(x, x_size, params), x_size))) + x
+[rank0]:                                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambairv2_arch.py", line 577, in forward
+[rank0]:     x = layer(x, x_size, params)
+[rank0]:         ^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambairv2_arch.py", line 501, in forward
+[rank0]:     x_aca = self.assm(self.norm3(x), x_size, self.embeddingA) + x
+[rank0]:             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambairv2_arch.py", line 263, in forward
+[rank0]:     y = self.selectiveScan(semantic_x, prompt)
+[rank0]:         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambairv2_arch.py", line 399, in forward
+[rank0]:     y = y.permute(0, 2, 1).contiguous()
+[rank0]:         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]: torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 34.00 MiB. GPU 0 has a total capacity of 22.30 GiB of which 22.88 MiB is free. Including non-PyTorch memory, this process has 22.27 GiB memory in use. Of the allocated memory 21.30 GiB is allocated by PyTorch, and 604.86 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+[rank3]: Traceback (most recent call last):
+[rank3]:   File "/groups/rls/blozanod/MambaFusion/main/train.py", line 225, in <module>
+[rank3]:     train_pipeline(root_path)
+[rank3]:   File "/groups/rls/blozanod/MambaFusion/main/train.py", line 178, in train_pipeline
+[rank3]:     model.optimize_parameters(current_iter)
+[rank3]:   File "/groups/rls/blozanod/MambaFusion/burstISP/models/sr_model.py", line 106, in optimize_parameters
+[rank3]:     self.output = self.net_g(self.lq)
+[rank3]:                   ^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank3]:     return self._call_impl(*args, **kwargs)
+[rank3]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank3]:     return forward_call(*args, **kwargs)
+[rank3]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/parallel/distributed.py", line 1637, in forward
+[rank3]:     else self._run_ddp_forward(*inputs, **kwargs)
+[rank3]:          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/parallel/distributed.py", line 1464, in _run_ddp_forward
+[rank3]:     return self.module(*inputs, **kwargs)  # type: ignore[index]
+[rank3]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank3]:     return self._call_impl(*args, **kwargs)
+[rank3]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank3]:     return forward_call(*args, **kwargs)
+[rank3]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambafusion_arch.py", line 67, in forward
+[rank3]:     output = self.restoration(fused_input)  # Shape: [B, C_out, H_out, W_out]
+[rank3]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank3]:     return self._call_impl(*args, **kwargs)
+[rank3]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank3]:     return forward_call(*args, **kwargs)
+[rank3]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambairv2_arch.py", line 1006, in forward
+[rank3]:     x = self.conv_after_body(self.forward_features(x, params)) + x
+[rank3]:                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambairv2_arch.py", line 947, in forward_features
+[rank3]:     x = layer(x, x_size, params)
+[rank3]:         ^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank3]:     return self._call_impl(*args, **kwargs)
+[rank3]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank3]:     return forward_call(*args, **kwargs)
+[rank3]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambairv2_arch.py", line 645, in forward
+[rank3]:     return self.patch_embed(self.conv(self.patch_unembed(self.residual_group(x, x_size, params), x_size))) + x
+[rank3]:                                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank3]:     return self._call_impl(*args, **kwargs)
+[rank3]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank3]:     return forward_call(*args, **kwargs)
+[rank3]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambairv2_arch.py", line 577, in forward
+[rank3]:     x = layer(x, x_size, params)
+[rank3]:         ^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank3]:     return self._call_impl(*args, **kwargs)
+[rank3]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank3]:     return forward_call(*args, **kwargs)
+[rank3]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambairv2_arch.py", line 501, in forward
+[rank3]:     x_aca = self.assm(self.norm3(x), x_size, self.embeddingA) + x
+[rank3]:             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank3]:     return self._call_impl(*args, **kwargs)
+[rank3]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank3]:     return forward_call(*args, **kwargs)
+[rank3]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambairv2_arch.py", line 263, in forward
+[rank3]:     y = self.selectiveScan(semantic_x, prompt)
+[rank3]:         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank3]:     return self._call_impl(*args, **kwargs)
+[rank3]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank3]:     return forward_call(*args, **kwargs)
+[rank3]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambairv2_arch.py", line 399, in forward
+[rank3]:     y = y.permute(0, 2, 1).contiguous()
+[rank3]:         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]: torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 34.00 MiB. GPU 3 has a total capacity of 22.30 GiB of which 22.88 MiB is free. Including non-PyTorch memory, this process has 22.27 GiB memory in use. Of the allocated memory 21.30 GiB is allocated by PyTorch, and 604.86 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+[rank2]: Traceback (most recent call last):
+[rank2]:   File "/groups/rls/blozanod/MambaFusion/main/train.py", line 225, in <module>
+[rank2]:     train_pipeline(root_path)
+[rank2]:   File "/groups/rls/blozanod/MambaFusion/main/train.py", line 178, in train_pipeline
+[rank2]:     model.optimize_parameters(current_iter)
+[rank2]:   File "/groups/rls/blozanod/MambaFusion/burstISP/models/sr_model.py", line 106, in optimize_parameters
+[rank2]:     self.output = self.net_g(self.lq)
+[rank2]:                   ^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank2]:     return self._call_impl(*args, **kwargs)
+[rank2]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank2]:     return forward_call(*args, **kwargs)
+[rank2]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/parallel/distributed.py", line 1637, in forward
+[rank2]:     else self._run_ddp_forward(*inputs, **kwargs)
+[rank2]:          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/parallel/distributed.py", line 1464, in _run_ddp_forward
+[rank2]:     return self.module(*inputs, **kwargs)  # type: ignore[index]
+[rank2]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank2]:     return self._call_impl(*args, **kwargs)
+[rank2]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank2]:     return forward_call(*args, **kwargs)
+[rank2]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambafusion_arch.py", line 67, in forward
+[rank2]:     output = self.restoration(fused_input)  # Shape: [B, C_out, H_out, W_out]
+[rank2]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank2]:     return self._call_impl(*args, **kwargs)
+[rank2]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank2]:     return forward_call(*args, **kwargs)
+[rank2]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambairv2_arch.py", line 1006, in forward
+[rank2]:     x = self.conv_after_body(self.forward_features(x, params)) + x
+[rank2]:                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambairv2_arch.py", line 947, in forward_features
+[rank2]:     x = layer(x, x_size, params)
+[rank2]:         ^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank2]:     return self._call_impl(*args, **kwargs)
+[rank2]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank2]:     return forward_call(*args, **kwargs)
+[rank2]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambairv2_arch.py", line 645, in forward
+[rank2]:     return self.patch_embed(self.conv(self.patch_unembed(self.residual_group(x, x_size, params), x_size))) + x
+[rank2]:                                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank2]:     return self._call_impl(*args, **kwargs)
+[rank2]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank2]:     return forward_call(*args, **kwargs)
+[rank2]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambairv2_arch.py", line 577, in forward
+[rank2]:     x = layer(x, x_size, params)
+[rank2]:         ^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank2]:     return self._call_impl(*args, **kwargs)
+[rank2]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank2]:     return forward_call(*args, **kwargs)
+[rank2]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambairv2_arch.py", line 501, in forward
+[rank2]:     x_aca = self.assm(self.norm3(x), x_size, self.embeddingA) + x
+[rank2]:             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank2]:     return self._call_impl(*args, **kwargs)
+[rank2]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank2]:     return forward_call(*args, **kwargs)
+[rank2]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambairv2_arch.py", line 263, in forward
+[rank2]:     y = self.selectiveScan(semantic_x, prompt)
+[rank2]:         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+[rank2]:     return self._call_impl(*args, **kwargs)
+[rank2]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+[rank2]:     return forward_call(*args, **kwargs)
+[rank2]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/groups/rls/blozanod/MambaFusion/burstISP/archs/mambairv2_arch.py", line 399, in forward
+[rank2]:     y = y.permute(0, 2, 1).contiguous()
+[rank2]:         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]: torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 34.00 MiB. GPU 2 has a total capacity of 22.30 GiB of which 22.88 MiB is free. Including non-PyTorch memory, this process has 22.27 GiB memory in use. Of the allocated memory 21.30 GiB is allocated by PyTorch, and 604.86 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+[rank0]:[W319 23:56:28.944368900 ProcessGroupNCCL.cpp:1476] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+W0319 23:56:29.145000 3301364 site-packages/torch/distributed/elastic/multiprocessing/api.py:900] Sending process 3301370 closing signal SIGTERM
+W0319 23:56:29.147000 3301364 site-packages/torch/distributed/elastic/multiprocessing/api.py:900] Sending process 3301371 closing signal SIGTERM
+E0319 23:56:30.894000 3301364 site-packages/torch/distributed/elastic/multiprocessing/api.py:874] failed (exitcode: 1) local_rank: 0 (pid: 3301368) of binary: /users/blozanod/.conda/envs/MambaTraining/bin/python3.12
+Traceback (most recent call last):
+  File "/users/blozanod/.conda/envs/MambaTraining/bin/torchrun", line 6, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 355, in wrapper
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/distributed/run.py", line 892, in main
+    run(args)
+  File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/distributed/run.py", line 883, in run
+    elastic_launch(
+  File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/distributed/launcher/api.py", line 139, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/users/blozanod/.conda/envs/MambaTraining/lib/python3.12/site-packages/torch/distributed/launcher/api.py", line 270, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+train.py FAILED
+------------------------------------------------------------
+Failures:
+[1]:
+  time      : 2026-03-19_23:56:29
+  host      : qa-a10-023.crc.nd.edu
+  rank      : 1 (local_rank: 1)
+  exitcode  : 1 (pid: 3301369)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-03-19_23:56:29
+  host      : qa-a10-023.crc.nd.edu
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 3301368)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================

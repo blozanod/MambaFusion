@@ -521,7 +521,7 @@ def print_summary(config, training, val):
 
 def main():
     if len(sys.argv) < 2:
-        log_path = "/home/blozanod/projects/MambaFusion/experiments/MambaFusion_x4/train_MambaFusion_x4_20260312_185939.log"
+        log_path = "/groups/rls/blozanod/MambaFusion/experiments/MambaFusion_x4_run2/train_MambaFusion_x4_run2.log"
     else:
         log_path = sys.argv[1]
 
@@ -535,7 +535,7 @@ def main():
 
     print_summary(config, training, val)
 
-    out_path = "/home/blozanod/projects/MambaFusion/analysis/dashboards/train_MambaFusion_x4_20260312_185939_dashboard.png"
+    out_path = "/groups/rls/blozanod/MambaFusion/analysis/dashboards/train_MambaFusion_x4_run2dashboard.png"
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     plot_dashboard(config, training, val, out_path)
 

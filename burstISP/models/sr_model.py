@@ -145,7 +145,7 @@ class SRModel(BaseModel):
         else:
             self.net_g.eval()
             with torch.no_grad():
-                self.output = self.net_g(self.lq)
+                self.output = self.get_bare_model(self.net_g)(self.lq)
             self.net_g.train()
 
     def test_selfensemble(self):
