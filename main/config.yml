@@ -32,7 +32,7 @@ network_g:
   type: MambaFusionNet
   num_frames: 5
   num_feat: 64
-  offset_groups: 8
+  offset_groups: 4
   embed_dim: 174
   d_state: 16
   scale: 8
@@ -45,6 +45,7 @@ network_g:
   mlp_ratio: 2
   upsampler: 'pixelshuffle'
   resi_connection: '1conv'
+  is_train: true
 
 # Training
 path:
@@ -75,20 +76,10 @@ train:
     type: CharbonnierLoss
     loss_weight: 1.0
     reduction: mean
-#  perceptual_opt:
-#    type: PerceptualLoss
-#    layer_weights:
-#      relu3_4: 0.25
-#      relu4_4: 0.25
-#      relu5_4: 0.5
-#    vgg_type: vgg19
-#    use_input_norm: true
-#    perceptual_weight: 0.50
-#    style_weight: 0.0
-#    criterion: l1
-#  sobel_opt:
-#    type: SobelLoss
-#    loss_weight: 1.0
+  alignment_opt:
+    type: CharbonnierLoss
+    loss_weight: 1.0
+    reduction: mean
 
 # Validation
 val:

@@ -6,12 +6,14 @@
 # --- END LICENSE NOTICE ---
 
 import os
+from pathlib import Path
 import cv2
 import torch
 import numpy as np
 import pickle as pkl
 import matplotlib.pyplot as plt
 
+# FIX 1: Removed the unused 'folder_path' argument from this function signature
 def generate_processed_image(im, meta_data, return_np=False, external_norm_factor=None, gamma=True, smoothstep=True,
                              no_white_balance=False):
     """Processes the raw tensor into a viewable RGB image."""
@@ -23,46 +25,7 @@ def generate_processed_image(im, meta_data, return_np=False, external_norm_facto
     if not meta_data.get('while_balance_applied', False) and not no_white_balance:
         im = im * torch.tensor(meta_data['cam_wb'])[[0, 1, -1]].view(3, 1, 1) / torch.tensor(meta_data['cam_wb'])[1]
     
-    """ TODO: Implement CCM that works for all images, different xyz2srgb matrix needs to be used, as img is already rgb
-              preferrably, matrix will either be universal or use matadata from the .pkl file to determine which matrix to use
-              
-    # Color Correction Matrix (CCM)
-    if 'rgb_xyz_matrix' in meta_data:
-        # Standard XYZ to linear sRGB conversion matrix (D65) using NumPy
-        xyz2srgb = np.array([
-            [3.2404542, -1.5371385, -0.4985314],
-            [-0.9692660, 1.8760108, 0.0415560],
-            [0.0556434, -0.2040259, 1.0572252]
-        ], dtype=np.float32)
-
-        # Extract XYZ -> Camera matrix from metadata
-        raw_matrix = np.array(meta_data['rgb_xyz_matrix'], dtype=np.float32)
-        xyz2cam = raw_matrix[[0, 1, 3], :]
-
-        # Invert to get Camera -> XYZ
-        cam2xyz = np.linalg.inv(xyz2cam)
-
-        # Handle White Balance interaction
-        if not no_white_balance:
-            # Slice [0, 1, 3] to grab R, G1, and B, making it a 3-element array
-            wb = np.array(meta_data['cam_wb'], dtype=np.float32)[[0, 1, 3]] 
-            gains = wb / wb[1] # The gains applied in step 2
-            inv_gains = np.diag(1.0 / gains) # Now this safely creates a 3x3 matrix
-        else:
-            inv_gains = np.eye(3, dtype=np.float32)
-
-        # Compute Combined Matrix
-        ccm = xyz2srgb @ cam2xyz @ inv_gains
-
-        # Convert the final 3x3 NumPy matrix back to a tensor to apply to the image
-        ccm_tensor = torch.from_numpy(ccm).to(im.device)
-
-        # Apply Matrix
-        C, H, W = im.shape
-        im_flat = im.view(C, -1)     # Flatten to (3, N)
-        im_flat = torch.mm(ccm_tensor, im_flat) # Matrix Multiply
-        im = im_flat.view(C, H, W)   # Reshape back
-        """
+    """ TODO: Implement CCM that works for all images... (Commented out in original) """
 
     im_out = im
 
@@ -85,15 +48,11 @@ def generate_processed_image(im, meta_data, return_np=False, external_norm_facto
         im_out = im_out.astype(np.uint8)
     return im_out
 
-
-def process_pipeline(folder_path, im_name, meta_name, output_name, visualize=False):
-    im_path = os.path.join(folder_path, im_name)
-    meta_path = os.path.join(folder_path, meta_name)
-    output_path = os.path.join(folder_path, output_name)
-
+# FIX 2: Updated parameters to accept exact paths directly instead of piecing them together here
+def process_pipeline(im_path, meta_path, output_path, visualize=False):
     # Load Image
     print(f"Loading {im_path}...")
-    im_raw = cv2.imread(im_path, cv2.IMREAD_UNCHANGED)
+    im_raw = cv2.imread(str(im_path), cv2.IMREAD_UNCHANGED)
     if im_raw is None:
         print(f"Error: Could not find image at {im_path}")
         return
@@ -108,11 +67,12 @@ def process_pipeline(folder_path, im_name, meta_name, output_name, visualize=Fal
 
     # Process Image
     print("Processing image...")
+    # FIX 3: Removed 'folder_path' from this call to match the updated signature
     rgb_image = generate_processed_image(im_tensor, meta_data, return_np=True)
 
-    # 5. Save Image
+    # Save Image
     bgr_image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
-    cv2.imwrite(output_path, bgr_image)
+    cv2.imwrite(str(output_path), bgr_image)
     print(f"Success! Processed image saved to: {output_path}")
 
     # Visualize the image using Matplotlib
@@ -124,4 +84,33 @@ def process_pipeline(folder_path, im_name, meta_name, output_name, visualize=Fal
         plt.show()
 
 if __name__ == '__main__':
-    process_pipeline(folder_path = r"/home/blozanod/projects/MambaFusion/dataset/022_0047_RAW", im_name="022_MFSR_Sony_0047_x4_rgb.png", meta_name="MFSR_Sony_0047_x4.pkl", output_name="im_processed_rgb.png", visualize=True)
+    input_folder = Path("inferences/V3")
+    
+    # FIX 4: Created a dedicated output folder so original files are not overwritten
+    output_folder = Path("inferences/V3_processed")
+    output_folder.mkdir(parents=True, exist_ok=True)
+
+    # Iterate over all PNG files in the folder
+    for img_path in input_folder.glob("*.png"):
+        im_name = img_path.name  # e.g., '006_0291_restored.png'
+
+        # Extract the base image name and format output
+        base_name = im_name.replace('_restored.png', '')
+        output_name = f"{base_name}_final.png"
+        output_path = output_folder / output_name
+
+        # Extract the image ID (e.g., '0291' from '006_0291')
+        img_id = base_name.split('_')[-1]
+        
+        # Construct the exact relative path to the .pkl file
+        meta_dir = Path(f"../dataset/RealBSR_RAW_testpatch/{base_name}")
+        meta_filename = f"MFSR_Sony_{img_id}_x4.pkl"
+        meta_path = meta_dir / meta_filename
+
+        # Call pipeline with explicit paths
+        process_pipeline(
+            im_path=img_path,
+            meta_path=meta_path,
+            output_path=output_path,
+            visualize=False
+        )

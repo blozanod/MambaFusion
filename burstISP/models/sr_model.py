@@ -102,8 +102,7 @@ class SRModel(BaseModel):
     def optimize_parameters(self, current_iter):
         self.optimizer_g.zero_grad()
 
-        with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-            self.output = self.net_g(self.lq)
+        self.output = self.net_g(self.lq)
         
         l_total = 0
         loss_dict = OrderedDict()

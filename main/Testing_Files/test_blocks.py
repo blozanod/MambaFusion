@@ -10,7 +10,7 @@ import torch.optim as optim
 
 # Ensure the root and parent directories are in the Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.abspath(os.path.join(current_dir, '..'))
+parent_dir = os.path.abspath(os.path.join(current_dir, '../..'))
 
 sys.path.append(current_dir)
 sys.path.append(parent_dir)
@@ -130,14 +130,22 @@ def test_mambafusion(opt):
 
 if __name__ == '__main__':
     # Set up path from main/test_data.py to MambaFusion/dataset folder
-    data_path = os.path.join(parent_dir, 'dataset')
+    data_path = os.path.join(parent_dir, 'dataset/RealBSR_RAW_testpatch_testing')
 
     # Dummy options dictionary
     opt = {
         'dataroot': data_path, 
         'num_frames': 3,
-        'num_feat': 16,
+        'num_feat': 64,
+        'out_chans': 3,
         'offset_groups': 4,
+        'd_state': 16,
+        'window_size': 16,
+        'inner_rank': 32,
+        'num_tokens': 8,
+        'embed_dim': 64,
+        'resi_connection': '1conv',
+        'convffn_kernel_size': 5,
         'scale': 8,
         'depths': [3, 3, 3, 3],
         'num_heads': [2, 2, 2, 2],

@@ -367,7 +367,7 @@ class Selective_Scan(nn.Module):
 
     def forward_core(self, x: torch.Tensor, prompt):
         B, L, C = x.shape
-        K = 1  # mambairV2 needs noly 1 scan
+        K = 1  # mambairV2 needs only 1 scan
         xs = x.permute(0, 2, 1).view(B, 1, C, L).contiguous()  # B, 1, C ,L
 
         x_dbl = torch.einsum("b k d l, k c d -> b k c l", xs.view(B, K, -1, L), self.x_proj_weight)
@@ -819,7 +819,7 @@ class MambaIRv2(nn.Module):
         self.upsampler = upsampler
 
         # ------------------------- 1, shallow feature extraction ------------------------- #
-        self.conv_first = nn.Conv2d(num_in_ch, embed_dim, 3, 1, 1)
+        self.conv_first = nn.Conv2d(num_in_ch, embed_dim, kernel_size=1, stride=1, padding=0)
 
         # ------------------------- 2, deep feature extraction ------------------------- #
         self.num_layers = len(depths)

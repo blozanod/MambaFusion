@@ -12,6 +12,7 @@ from torch.nn.modules.batchnorm import _BatchNorm
 from torchvision.ops import deform_conv2d
 
 from burstISP.utils import get_root_logger
+from torch.nn.init import xavier_uniform_, constant_
 
 """
 try:
@@ -23,6 +24,103 @@ except ImportError:
     ModulatedDeformConvPack = object
     modulated_deform_conv = None
 """
+
+try:
+    from DCNv4.functions.dcnv4_func import DCNv4Function
+except ImportError:
+    print('Cannot import DCNv4. Ignore this warning is DCNv4 is not used.'
+          'Otherwise compile DCNv4 from source: python setup.py install')
+
+class DCNv4Block(nn.Module):
+    """ Wrapper class for DCNv4Func, uses low-level implementation to allow burst alignment.
+        Instead of having DCN compute offset masks itself, DCNv4Block expects precomputed offsets.
+        These offsets come from dcn_align_arch.py (PCD align)
+        Replaces standard DCNv2 block with optimized DCNv4.
+        Modified from DCNv4 module.
+    """
+    def __init__(self,
+                channels=64,
+                kernel_size=3,
+                stride=1,
+                pad=1,
+                dilation=1,
+                groups=4,
+                offset_scale=1.0,
+                dw_kernel_size=None,
+                center_feature_scale=False,
+                remove_center=False,
+                output_bias=True,
+                without_pointwise=False,
+                **kwargs):
+        super().__init__()
+        if channels % groups != 0:
+            raise ValueError(
+                f'channels must be divisible by group, but got {channels} and {groups}')
+        _d_per_group = channels // groups
+
+        # you'd better set _d_per_group to a power of 2 which is more efficient in our CUDA implementation
+        assert _d_per_group % 16 == 0
+
+        self.channels = channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = pad
+        self.dilation = dilation
+        self.group = groups
+        self.group_channels = channels // groups
+        self.offset_scale = offset_scale
+        self.dw_kernel_size = dw_kernel_size
+        self.center_feature_scale = center_feature_scale
+        self.remove_center = int(remove_center)
+        self.without_pointwise = without_pointwise
+
+        # Pointwise projections
+        if not without_pointwise:
+            self.value_proj = nn.Conv2d(channels, channels, kernel_size=1)
+            self.output_proj = nn.Conv2d(channels, channels, kernel_size=1)
+        self._reset_parameters()
+
+    def _reset_parameters(self):
+        if not self.without_pointwise:
+            nn.init.kaiming_uniform_(self.value_proj.weight, nonlinearity="relu")
+            if self.value_proj.bias is not None:
+                nn.init.zeros_(self.value_proj.bias)
+                
+            nn.init.kaiming_uniform_(self.output_proj.weight, nonlinearity="relu")
+            if self.output_proj.bias is not None:
+                nn.init.zeros_(self.output_proj.bias)
+    
+    def forward(self, x, offset_mask):
+        """
+        :param query (N, H, W, C) -> hence x.permute
+        :return output (N, H, W, C) -> returning permuted back to torch std
+        """
+        B, C, H, W = x.shape
+        if not self.without_pointwise:
+            x = self.value_proj(x)
+
+        # Channel-last permutation for CUDA Kernel
+        x = x.permute(0, 2, 3, 1).contiguous()
+        offset_mask = offset_mask.permute(0, 2, 3, 1).contiguous()
+
+        # Apply DCNv4
+        out = DCNv4Function.apply(
+            x, offset_mask,
+            self.kernel_size, self.kernel_size,
+            self.stride, self.stride,
+            self.padding, self.padding,
+            self.dilation, self.dilation,
+            self.group, self.group_channels,
+            self.offset_scale, 256,
+            self.remove_center
+        )
+
+        # Permute back to Torch Standard
+        out = out.view(B, H, W, C).permute(0, 3, 1, 2).contiguous()
+        if not self.without_pointwise:
+            out = self.output_proj(out)
+        
+        return out
 
 @torch.no_grad()
 def default_init_weights(module_list, scale=1, bias_fill=0, **kwargs):
