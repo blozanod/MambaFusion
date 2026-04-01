@@ -2794,3 +2794,5 @@ Version Information:
 2026-03-31 23:34:17,751 INFO: [Mamba..][epoch: 89, iter: 234,700, lr:(9.956e-05,)] [eta: 18:03:22, time (data): 0.841 (0.002)] l_rec: 3.0300e-03 
 2026-03-31 23:35:41,879 INFO: [Mamba..][epoch: 89, iter: 234,800, lr:(9.948e-05,)] [eta: 18:01:38, time (data): 0.841 (0.002)] l_rec: 3.2659e-03 
 2026-03-31 23:37:06,089 INFO: [Mamba..][epoch: 89, iter: 234,900, lr:(9.940e-05,)] [eta: 17:59:54, time (data): 0.842 (0.002)] l_rec: 2.0152e-03 
+2026-03-31 23:38:30,287 INFO: [Mamba..][epoch: 89, iter: 235,000, lr:(9.932e-05,)] [eta: 17:58:10, time (data): 0.843 (0.002)] l_rec: 2.1930e-03 
+2026-03-31 23:38:30,288 INFO: Saving models and training states.
