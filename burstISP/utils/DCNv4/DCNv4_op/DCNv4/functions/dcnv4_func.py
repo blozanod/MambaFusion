@@ -61,7 +61,7 @@ def find_spec_bwd(B, H, W, G, C):
 
 class DCNv4Function(Function):
     @staticmethod
-    @custom_fwd
+    @torch.amp.custom_fwd(device_type='cuda')
     def forward(
             ctx, input, offset_mask,
             kernel_h, kernel_w, stride_h, stride_w,
@@ -107,7 +107,7 @@ class DCNv4Function(Function):
 
     @staticmethod
     @once_differentiable
-    @custom_bwd
+    @torch.amp.custom_bwd(device_type='cuda')
     def backward(ctx, grad_output):
         input, offset_mask = ctx.saved_tensors
 

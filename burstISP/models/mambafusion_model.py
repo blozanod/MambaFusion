@@ -53,7 +53,7 @@ class MambaFusionModel(SRModel):
             
             # Compute Charbonnier between each aligned neighbor and the reference
             for i in range(num_frames):
-                if i != 2:
+                if i != ref_index:
                     l_align += self.cri_align(aligned_burst[:, i, :, :, :], ref_feat)
             
             # Average the loss across the 4 neighboring frames

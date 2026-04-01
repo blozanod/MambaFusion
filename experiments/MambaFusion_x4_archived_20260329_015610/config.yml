@@ -1,3 +1,7 @@
+# GENERATE TIME: Sun Mar 29 01:53:06 2026
+# CMD:
+# train.py -opt config.yml --launcher pytorch
+
 # config.yml
 name: MambaFusion_x4
 model_type: MambaFusionModel
@@ -50,9 +54,9 @@ network_g:
 
 # Training
 path:
-  pretrain_network_g: /groups/rls/blozanod/MambaFusion/experiments/MambaFusion_x4/models/net_g_5000.pth
+  pretrain_network_g: ~
   strict_load_g: true
-  resume_state: /groups/rls/blozanod/MambaFusion/experiments/MambaFusion_x4/training_states/5000.state
+  resume_state: ~
   experiments_root: ~
 
 train:

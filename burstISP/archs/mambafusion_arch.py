@@ -36,11 +36,12 @@ class MambaFusionNet(nn.Module):
         self.num_feat = opt['num_feat']
         self.offset_groups = opt['offset_groups']
         self.is_train = opt['is_train']
+        self.fusion_heads = opt['fusion_heads']
 
         # Alignment module
         self.alignment = BurstAlign(num_feat=self.num_feat, num_frames=self.num_frames, offset_groups=self.offset_groups)
 
-        self.fusion = TemporalFusion(num_frames=self.num_frames, num_feat=self.num_feat, window_size=self.opt['window_size'], num_heads=self.opt['num_heads'][0])
+        self.fusion = TemporalFusion(num_frames=self.num_frames, num_feat=self.num_feat, window_size=self.opt['window_size'], num_heads=self.fusion_heads)
 
         # Restoration module
         self.restoration = MambaIRv2(
@@ -62,7 +63,10 @@ class MambaFusionNet(nn.Module):
 
     def forward(self, x):
         # Align features from burst frames
-        aligned_burst = self.alignment(x)  # Shape: [B, N, C, H, W]
+        with torch.cuda.amp.autocast(enabled=False):
+            aligned_burst = self.alignment(x.float())  # Shape: [B, N, C, H, W]
+
+        aligned_burst = aligned_burst.to(x.dtype)
 
         """
         New Transformer-Based Cross-Frame Fusion Plan: Done!

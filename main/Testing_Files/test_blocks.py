@@ -134,6 +134,7 @@ if __name__ == '__main__':
 
     # Dummy options dictionary
     opt = {
+        'is_train':True,
         'dataroot': data_path, 
         'num_frames': 3,
         'num_feat': 64,
