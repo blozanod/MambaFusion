@@ -112,6 +112,9 @@ def main():
         save_filename = os.path.join(args.output_path, f"{directory}_restored.png")
         
         # Manually convert [0, 1] tensor back to a 16-bit numpy array
+        if isinstance(output_tensor, tuple):
+            output_tensor = output_tensor[0]
+        
         output_img = output_tensor.squeeze(0).float().detach().cpu().clamp_(0, 1)
         output_img = (output_img.numpy() * 65535.0).round().astype(np.uint16)
         

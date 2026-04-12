@@ -41,7 +41,9 @@ class MambaFusionNet(nn.Module):
         # Alignment module
         self.alignment = BurstAlign(num_feat=self.num_feat, num_frames=self.num_frames, offset_groups=self.offset_groups)
 
+        # Fusion module & aux upsampler
         self.fusion = TemporalFusion(num_frames=self.num_frames, num_feat=self.num_feat, window_size=self.opt['window_size'], num_heads=self.fusion_heads)
+        self.aux_upsampler = AuxUpsampler(in_channels=self.num_feat, scale_factor=self.opt['scale'], out_channels=3)
 
         # Restoration module
         self.restoration = MambaIRv2(
@@ -64,36 +66,10 @@ class MambaFusionNet(nn.Module):
 
     def forward(self, x):
         # Align features from burst frames
-        with torch.amp.autocast("cuda",enabled=False):
+        with torch.amp.autocast("cuda", enabled=False):
             aligned_burst = self.alignment(x.float())  # Shape: [B, N, C, H, W]
 
         aligned_burst = aligned_burst.to(x.dtype)
-
-        """
-        New Transformer-Based Cross-Frame Fusion Plan: Done!
-        Center frame feature (frame 7): Query
-        All frame features: key/values
-        Use window paritioning for manageable compute (like in SwinIR)
-        Output: Single fused feature map: [B, C, H, W]
-
-        SR Head Modifications: Done!
-        Drop shallow feature extraction (first conv), has already been done by other steps
-        do this by changing kernel to 1x1
-
-        New Alignment Loss:
-        Calculate alignment loss by returning aligned_burst variable to training function
-        if it is training. Then remove the center frame from the burst and use it as a reference instead.
-        Then add the alignment loss to the total loss. This way alignment loss gradients reach alignment module.
-        For this, it is wise to scale the loss over time (0.5x -> 0.10x -> 0.0x)
-
-        New Alignment: Done!
-        Swap DCNv2 for DCNv4, as well as interpolation for PixelShuffle for better upscaling in pyramid
-        REMEMBER: REQUIRES COMPILING DCNV4 KERNELS AND CHANGING CONFIG.YML SO OFFSET GROUPS = 4, OFFSETS = 64
-
-        Future Improvements:
-        One whole joint architecture (not like 3-4 separate modules)
-        Supervise training with PWC-Net for greater alignment accuracy
-        """
 
         # Collapse burst dimension into batch dimension for restoration
         fused_input = self.fusion(aligned_burst)
@@ -102,6 +78,25 @@ class MambaFusionNet(nn.Module):
         output = self.restoration(fused_input)  # Shape: [B, C_out, H_out, W_out]
 
         if self.is_train:
-            return output, aligned_burst
+            fusion_output = self.aux_upsampler(fused_input)
+            return output, aligned_burst, fusion_output
         else:
             return output
+
+@ARCH_REGISTRY.register()
+class AuxUpsampler(nn.Module):
+    """Auxiliary upsample uses PixelShuffle to upsample directly from fused features
+    
+    Used to calculate fusion loss to supervise fusion module
+    """
+    def __init__(self, in_channels, scale_factor=8, out_channels=3):
+        super().__init__()
+        mid_channels = out_channels * (scale_factor ** 2)
+        
+        self.upsample = nn.Sequential(
+            nn.Conv2d(in_channels, mid_channels, kernel_size=3, padding=1),
+            nn.PixelShuffle(scale_factor)
+        )
+
+    def forward(self, x):
+        return self.upsample(x)

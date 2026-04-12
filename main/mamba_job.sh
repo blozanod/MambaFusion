@@ -8,7 +8,12 @@
 #$ -N MambaFusion_Train       # Specify job name
 #$ -cwd
 
+if [ -z "$1" ]; then
+    echo "Error: No config file specified. Usage: qsub script.sh <config_name>"
+    exit 1
+fi
+
 conda activate MambaTraining
 cd /groups/rls/blozanod/MambaFusion/main
 
-torchrun --nproc_per_node=4  train.py -opt config.yml --launcher pytorch
+torchrun --nproc_per_node=4  train.py -opt "$1" --launcher pytorch

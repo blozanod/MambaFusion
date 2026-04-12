@@ -512,11 +512,16 @@ class SobelLoss(nn.Module):
         self.register_buffer("sobel_y", sobel_y.view(1, 1, 3, 3).repeat(3, 1, 1, 1))
 
     def forward(self, pred, target):
+        # Allows for dynamic channels (for feature alignment)
+        channels = pred.shape[1]
+        sobel_x = self.kernel_x.repeat(channels, 1, 1, 1)
+        sobel_y = self.kernel_y.repeat(channels, 1, 1, 1)
+
         # Compute gradients
-        grad_pred_x = F.conv2d(pred, self.sobel_x, padding=1, groups=3)
-        grad_pred_y = F.conv2d(pred, self.sobel_y, padding=1, groups=3)
-        grad_target_x = F.conv2d(target, self.sobel_x, padding=1, groups=3)
-        grad_target_y = F.conv2d(target, self.sobel_y, padding=1, groups=3)
+        grad_pred_x = F.conv2d(pred, sobel_x.to(pred.dtype), padding=1, groups=3)
+        grad_pred_y = F.conv2d(pred, sobel_y.to(pred.dtype), padding=1, groups=3)
+        grad_target_x = F.conv2d(target, sobel_x.to(pred.dtype), padding=1, groups=3)
+        grad_target_y = F.conv2d(target, sobel_y.to(pred.dtype), padding=1, groups=3)
 
         # Compute L1 loss on gradients
         loss_x = F.l1_loss(grad_pred_x, grad_target_x, reduction=self.reduction)

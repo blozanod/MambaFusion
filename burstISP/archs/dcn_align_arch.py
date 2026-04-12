@@ -91,43 +91,43 @@ class BurstAlign(nn.Module):
         features_lv1 = features_lv1.view(B, N, -1, H, W)  # [B, N, num_feat, H, W]
         features_lv2 = features_lv2.view(B, N, -1, H // 2, W // 2)  # [B, N, num_feat, H/2, W/2]
 
-        # Select center reference frames
-        ref_frame_lv1 = features_lv1[:, self.center_frame_idx, :, :, :]
-        ref_frame_lv2 = features_lv2[:, self.center_frame_idx, :, :, :]
+        # Select center reference features
+        ref_feat_lv1 = features_lv1[:, self.center_frame_idx, :, :, :]
+        ref_feat_lv2 = features_lv2[:, self.center_frame_idx, :, :, :]
 
-        aligned_frames = []
+        aligned_feats = []
 
         # Loop through each frame and align to the reference frame
         for i in range(N):
             if i == self.center_frame_idx:
-                aligned_frames.append(ref_frame_lv1)
+                aligned_feats.append(ref_feat_lv1)
                 continue
 
             # Select and concatenate current frame features
-            curr_lv1 = features_lv1[:, i, :, :, :]
-            curr_lv2 = features_lv2[:, i, :, :, :]
+            curr_feat_lv1 = features_lv1[:, i, :, :, :]
+            curr_feat_lv2 = features_lv2[:, i, :, :, :]
 
             # LV2 Coarse Alignment
-            concat_lv2 = torch.cat([ref_frame_lv2, curr_lv2], dim=1)  # [B, 2*num_feat, H/2, W/2]
-            feat_lv2 = self.offset_predictor_lv2(concat_lv2)
+            concat_lv2 = torch.cat([ref_feat_lv2, curr_feat_lv2], dim=1)  # [B, 2*num_feat, H/2, W/2]
+            motion_feats_lv2 = self.offset_predictor_lv2(concat_lv2)
 
             # PixelShuffle Upsampling
-            feat_lv2_upsampled = self.up_lv2(feat_lv2)  # [B, num_feat, H, W]
+            motion_lv2_upsampled = self.up_lv2(motion_feats_lv2)  # [B, num_feat, H, W]
 
             # LV1 Fine Alignment
-            concat_feat = torch.cat([ref_frame_lv1, curr_lv1], dim=1)
-            feat_lv1 = self.offset_predictor_lv1(concat_feat)
+            concat_lv1 = torch.cat([ref_feat_lv1, curr_feat_lv1], dim=1)
+            motion_feats_lv1 = self.offset_predictor_lv1(concat_lv1)
 
             # Cascade
-            feat_lv1_fused = feat_lv1 + feat_lv2_upsampled
+            cascaded_motions = motion_feats_lv1 + motion_lv2_upsampled
 
             # Projection to DCNv4 format
-            offset_mask_lv1 = self.offset_proj_lv1(feat_lv1_fused)
+            offset_masks = self.offset_proj_lv1(cascaded_motions)
 
             # DCNv4 Conv
-            aligned_feat = self.dcn_lv1(curr_lv1, offset_mask_lv1)
-            aligned_frames.append(aligned_feat)
+            aligned_feat = self.dcn_lv1(curr_feat_lv1, offset_masks)
+            aligned_feats.append(aligned_feat)
 
-        # Stack aligned frames
-        aligned_frames = torch.stack(aligned_frames, dim=1)  # [B, N, num_feat, H, W]
-        return aligned_frames
+        # Stack aligned features
+        aligned_feats = torch.stack(aligned_feats, dim=1)  # [B, N, num_feat, H, W]
+        return aligned_feats

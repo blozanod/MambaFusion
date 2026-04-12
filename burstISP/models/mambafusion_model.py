@@ -20,6 +20,11 @@ class MambaFusionModel(SRModel):
             else:
                 self.cri_align = None
 
+            if train_opt.get('fusion_opt'):
+                self.cri_fusion = build_loss(train_opt['fusion_opt']).to(self.device)
+            else:
+                self.cri_fusion = None
+
     def feed_data(self, data):
         self.lq = data['lq'].to(self.device) # [B, N, C, H, W]
         if 'gt' in data:
@@ -31,7 +36,7 @@ class MambaFusionModel(SRModel):
         
         # Forward Pass
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-            self.output, aligned_burst = self.net_g(self.lq)
+            self.output, aligned_burst, fusion_output = self.net_g(self.lq)
 
         ref_index = aligned_burst.shape[1] // 2
         l_total = 0
@@ -44,7 +49,7 @@ class MambaFusionModel(SRModel):
             loss_dict['l_rec'] = l_rec
 
         # alignment loss
-        if hasattr(self, 'cri_align') and self.cri_align:
+        if self.cri_align:
             # Extract and detach center frame
             ref_feat = aligned_burst[:, ref_index, :, :, :].detach()
             
@@ -58,15 +63,16 @@ class MambaFusionModel(SRModel):
             
             # Average the loss across the 4 neighboring frames
             l_align = l_align / (num_frames - 1)
-
-            # Anneal the Alignment Loss over time (Nope, just 0.05)
-            align_weight = 0.05
-
-            l_align = l_align * align_weight
             
-            if align_weight > 0:
-                l_total += l_align
-                loss_dict['l_align'] = l_align
+            # Add alignment loss to total loss
+            l_total += l_align
+            loss_dict['l_align'] = l_align
+
+        # fusion loss
+        if self.cri_fusion:
+            l_fusion = self.cri_fusion(fusion_output, self.gt)
+            l_total += l_fusion
+            loss_dict['l_fusion'] = l_fusion
 
         # Backpropagation
         l_total.backward()

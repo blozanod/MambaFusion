@@ -84,10 +84,10 @@ def process_pipeline(im_path, meta_path, output_path, visualize=False):
         plt.show()
 
 if __name__ == '__main__':
-    input_folder = Path("inferences/V3")
+    input_folder = Path("inferences/V4_Current")
     
     # FIX 4: Created a dedicated output folder so original files are not overwritten
-    output_folder = Path("inferences/V3_processed")
+    output_folder = Path("inferences/V4_Current")
     output_folder.mkdir(parents=True, exist_ok=True)
 
     # Iterate over all PNG files in the folder
@@ -96,14 +96,14 @@ if __name__ == '__main__':
 
         # Extract the base image name and format output
         base_name = im_name.replace('_restored.png', '')
-        output_name = f"{base_name}_final.png"
+        output_name = f"{base_name}_restored.png"
         output_path = output_folder / output_name
 
         # Extract the image ID (e.g., '0291' from '006_0291')
         img_id = base_name.split('_')[-1]
         
         # Construct the exact relative path to the .pkl file
-        meta_dir = Path(f"../dataset/RealBSR_RAW_testpatch/{base_name}")
+        meta_dir = Path(f"../dataset/Inference_Set/{base_name}")
         meta_filename = f"MFSR_Sony_{img_id}_x4.pkl"
         meta_path = meta_dir / meta_filename
 
