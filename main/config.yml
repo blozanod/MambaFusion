@@ -31,6 +31,7 @@ datasets:
 network_g:
   type: MambaFusionNet
   num_frames: 5
+  img_size: 80
   num_feat: 64
   offset_groups: 4
   fusion_heads: 4
@@ -50,9 +51,9 @@ network_g:
 
 # Training
 path:
-  pretrain_network_g: /groups/rls/blozanod/MambaFusion/experiments/MambaFusion_x4/models/net_g_5000.pth
+  pretrain_network_g: ~
   strict_load_g: true
-  resume_state: /groups/rls/blozanod/MambaFusion/experiments/MambaFusion_x4/training_states/5000.state
+  resume_state: ~
   experiments_root: ~
 
 train:
@@ -61,7 +62,7 @@ train:
 
   optim_g:
     type: AdamW
-    lr: !!float 5e-4
+    lr: !!float 2e-4
     weight_decay: !!float 1e-4
     betas: [0.9, 0.99]
     eps: !!float 1e-6
@@ -74,10 +75,6 @@ train:
     eta_min: !!float 1e-7
 
   pixel_opt:
-    type: CharbonnierLoss
-    loss_weight: 1.0
-    reduction: mean
-  alignment_opt:
     type: CharbonnierLoss
     loss_weight: 1.0
     reduction: mean

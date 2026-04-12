@@ -45,6 +45,7 @@ class MambaFusionNet(nn.Module):
 
         # Restoration module
         self.restoration = MambaIRv2(
+            img_size= self.opt['img_size'],
             in_chans= self.num_feat,
             out_chans = 3, # For RGB image
             embed_dim=self.opt['embed_dim'],
@@ -63,7 +64,7 @@ class MambaFusionNet(nn.Module):
 
     def forward(self, x):
         # Align features from burst frames
-        with torch.cuda.amp.autocast(enabled=False):
+        with torch.amp.autocast("cuda",enabled=False):
             aligned_burst = self.alignment(x.float())  # Shape: [B, N, C, H, W]
 
         aligned_burst = aligned_burst.to(x.dtype)

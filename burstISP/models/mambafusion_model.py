@@ -59,13 +59,8 @@ class MambaFusionModel(SRModel):
             # Average the loss across the 4 neighboring frames
             l_align = l_align / (num_frames - 1)
 
-            # Anneal the Alignment Loss over time (0.5x -> 0.10x -> 0.0x)
-            if current_iter < 50000:
-                align_weight = 0.5
-            elif current_iter < 100000:
-                align_weight = 0.1
-            else:
-                align_weight = 0.0
+            # Anneal the Alignment Loss over time (Nope, just 0.05)
+            align_weight = 0.05
 
             l_align = l_align * align_weight
             
@@ -75,6 +70,9 @@ class MambaFusionModel(SRModel):
 
         # Backpropagation
         l_total.backward()
+
+        clip_norm = self.opt['datasets']['train'].get('grad_clip_norm',1.0)
+        torch.nn.utils.clip_grad_norm_(self.net_g.parameters(), clip_norm)
         self.optimizer_g.step()
 
         self.log_dict = self.reduce_loss_dict(loss_dict)
