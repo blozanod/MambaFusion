@@ -500,16 +500,16 @@ class SobelLoss(nn.Module):
         self.loss_weight = loss_weight
 
         # Sobel filters for edge detection
-        sobel_x = torch.tensor([[-1., 0., 1.],
+        kx = torch.tensor([[-1., 0., 1.],
                                  [-2., 0., 2.],
                                  [-1., 0., 1.]])
-        sobel_y = torch.tensor([[-1., -2., -1.],
+        ky = torch.tensor([[-1., -2., -1.],
                                  [0., 0., 0.],
                                  [1., 2., 1.]])
         
         # Reshape filters for RGB images
-        self.register_buffer("sobel_x", sobel_x.view(1, 1, 3, 3).repeat(3, 1, 1, 1))
-        self.register_buffer("sobel_y", sobel_y.view(1, 1, 3, 3).repeat(3, 1, 1, 1))
+        self.register_buffer("kernel_x", kx.view(1, 1, 3, 3).repeat(3, 1, 1, 1))
+        self.register_buffer("kernel_y", ky.view(1, 1, 3, 3).repeat(3, 1, 1, 1))
 
     def forward(self, pred, target):
         # Allows for dynamic channels (for feature alignment)
