@@ -501,27 +501,27 @@ class SobelLoss(nn.Module):
 
         # Sobel filters for edge detection
         kx = torch.tensor([[-1., 0., 1.],
-                                 [-2., 0., 2.],
-                                 [-1., 0., 1.]])
+                            [-2., 0., 2.],
+                            [-1., 0., 1.]])
         ky = torch.tensor([[-1., -2., -1.],
-                                 [0., 0., 0.],
-                                 [1., 2., 1.]])
+                            [0., 0., 0.],
+                            [1., 2., 1.]])
         
         # Reshape filters for RGB images
-        self.register_buffer("kernel_x", kx.view(1, 1, 3, 3).repeat(3, 1, 1, 1))
-        self.register_buffer("kernel_y", ky.view(1, 1, 3, 3).repeat(3, 1, 1, 1))
+        self.register_buffer("kx", kx.view(1, 1, 3, 3))
+        self.register_buffer("ky", ky.view(1, 1, 3, 3))
 
     def forward(self, pred, target):
         # Allows for dynamic channels (for feature alignment)
         channels = pred.shape[1]
-        sobel_x = self.kernel_x.repeat(channels, 1, 1, 1)
-        sobel_y = self.kernel_y.repeat(channels, 1, 1, 1)
+        sobel_x = self.kx.repeat(channels, 1, 1, 1).to(pred.dtype)
+        sobel_y = self.ky.repeat(channels, 1, 1, 1).to(pred.dtype)
 
         # Compute gradients
-        grad_pred_x = F.conv2d(pred, sobel_x.to(pred.dtype), padding=1, groups=3)
-        grad_pred_y = F.conv2d(pred, sobel_y.to(pred.dtype), padding=1, groups=3)
-        grad_target_x = F.conv2d(target, sobel_x.to(pred.dtype), padding=1, groups=3)
-        grad_target_y = F.conv2d(target, sobel_y.to(pred.dtype), padding=1, groups=3)
+        grad_pred_x = F.conv2d(pred, sobel_x, padding=1, groups=channels)
+        grad_pred_y = F.conv2d(pred, sobel_y, padding=1, groups=channels)
+        grad_target_x = F.conv2d(target, sobel_x, padding=1, groups=channels)
+        grad_target_y = F.conv2d(target, sobel_y, padding=1, groups=channels)
 
         # Compute L1 loss on gradients
         loss_x = F.l1_loss(grad_pred_x, grad_target_x, reduction=self.reduction)
