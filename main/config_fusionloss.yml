@@ -82,6 +82,12 @@ train:
       type: CharbonnierLoss
       loss_weight: 0.1
       reduction: mean
+  cobi_opt:
+    type: CoBiLoss
+    loss_weight: 1.0
+    vgg_layer: 'relu4_4'
+    weight_sp: 0.1
+    band_width: 0.5
 
 # Validation
 val:

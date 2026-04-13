@@ -528,3 +528,82 @@ class SobelLoss(nn.Module):
         loss_y = F.l1_loss(grad_pred_y, grad_target_y, reduction=self.reduction)
 
         return (loss_x + loss_y) * self.loss_weight
+
+@LOSS_REGISTRY.register()
+class CoBiLoss(nn.Module):
+    """Contextual Bilateral Loss (CoBi).
+    
+    Args:
+        loss_weight (float): Loss weight. Default: 1.0.
+        vgg_layer (str): VGG layer used for feature extraction. Default: 'relu3_2'.
+        weight_sp (float): Weight for spatial distance. Default: 0.1.
+        band_width (float): Bandwidth for affinity. Default: 0.5.
+    """
+    def __init__(self, loss_weight=1.0, vgg_layer='relu3_2', weight_sp=0.1, band_width=0.5):
+        super(CoBiLoss, self).__init__()
+        self.loss_weight = loss_weight
+        self.weight_sp = weight_sp
+        self.band_width = band_width
+        self.vgg_layer = vgg_layer
+        
+        # Load VGG dynamically using BasicSR's native extractor
+        self.vgg = VGGFeatureExtractor(
+            layer_name_list=[vgg_layer], 
+            vgg_type='vgg19', 
+            use_input_norm=True, 
+            range_norm=False
+        )
+        # Freeze VGG parameters so we don't accidentally train them
+        for param in self.vgg.parameters():
+            param.requires_grad = False
+
+    def forward(self, pred, target, **kwargs):
+        # Extract features (target is detached for safety)
+        pred_feat = self.vgg(pred)[self.vgg_layer]
+        with torch.no_grad():
+            target_feat = self.vgg(target)[self.vgg_layer]
+
+        B, C, H, W = pred_feat.size()
+        N = H * W
+
+        # Spatial Distance
+        # Generate grid [2, H, W]
+        grid_y, grid_x = torch.meshgrid(torch.arange(H), torch.arange(W), indexing='ij')
+        coords = torch.stack([grid_x, grid_y], dim=0).float().to(pred.device)
+        
+        # Normalize to [0, 1] so weight_sp is resolution-invariant
+        coords[0] = coords[0] / max(W - 1, 1)
+        coords[1] = coords[1] / max(H - 1, 1)
+        coords = coords.view(2, N)
+        
+        # Calculate N x N spatial distance matrix -> expand to [B, N, N]
+        dist_spatial = torch.cdist(coords.t(), coords.t(), p=2) 
+        dist_spatial = dist_spatial.unsqueeze(0).expand(B, -1, -1)
+
+        # Feature Distance
+        pred_vec = pred_feat.view(B, C, N)
+        target_vec = target_feat.view(B, C, N)
+
+        pred_norm = F.normalize(pred_vec, dim=1)
+        target_norm = F.normalize(target_vec, dim=1)
+
+        # Cosine distance: 1 - cosine_similarity -> shape [B, N, N]
+        # Clamped to prevent slight negative values from fp32 precision noise
+        dist_feat = torch.clamp(1.0 - torch.bmm(pred_norm.transpose(1, 2), target_norm), min=0.0)
+
+        # 3. Combined Contextual Bilateral Distance
+        dist_total = dist_feat + (self.weight_sp * dist_spatial)
+
+        # Contextual Affinity
+        # Normalize distance by minimum distance for each pixel
+        dist_min, _ = torch.min(dist_total, dim=2, keepdim=True)
+        dist_rel = dist_total / (dist_min + 1e-5)
+        
+        # Convert to affinity
+        affinity = torch.exp((1.0 - dist_rel) / self.band_width)
+        
+        # Final Loss
+        cx = torch.mean(torch.max(affinity, dim=2)[0], dim=1) 
+        loss = -torch.log(cx + 1e-5)
+
+        return self.loss_weight * loss.mean()

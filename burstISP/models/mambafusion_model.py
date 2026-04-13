@@ -24,6 +24,11 @@ class MambaFusionModel(SRModel):
                 self.cri_fusion = build_loss(train_opt['fusion_opt']).to(self.device)
             else:
                 self.cri_fusion = None
+            
+            if train_opt.get('cobi_opt'):
+                self.cri_cobi = build_loss(train_opt['cobi_opt']).to(self.device)
+            else:
+                self.cri_cobi = None
 
     def feed_data(self, data):
         self.lq = data['lq'].to(self.device) # [B, N, C, H, W]
@@ -38,15 +43,25 @@ class MambaFusionModel(SRModel):
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
             self.output, aligned_burst, fusion_output = self.net_g(self.lq)
 
+        self.output = self.output.float()
+        aligned_burst = aligned_burst.float()
+        fusion_output = fusion_output.float()
+
         ref_index = aligned_burst.shape[1] // 2
         l_total = 0
         loss_dict = OrderedDict()
 
         # pixel loss
         if self.cri_pix:
-            l_rec = self.cri_pix(self.output, self.gt)
-            l_total += l_rec
-            loss_dict['l_rec'] = l_rec
+            l_pix = self.cri_pix(self.output, self.gt)
+            l_total += l_pix
+            loss_dict['l_pix'] = l_pix
+
+        # CoBi loss
+        if self.cri_cobi:
+            l_cobi = self.cri_cobi(self.output, self.gt)
+            l_total += l_cobi
+            loss_dict['l_cobi'] = l_cobi
 
         # alignment loss
         if self.cri_align:

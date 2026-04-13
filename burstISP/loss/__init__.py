@@ -7,7 +7,7 @@ from .losses import (CharbonnierLoss, GANLoss, L1Loss, MSELoss, WeightedTVLoss, 
 
 __all__ = [
     'L1Loss', 'MSELoss', 'CharbonnierLoss', 'WeightedTVLoss', 'GANLoss', 'gradient_penalty_loss',
-    'r1_penalty', 'g_path_regularize', 'SobelLoss', 'PerceptualLoss'
+    'r1_penalty', 'g_path_regularize', 'SobelLoss', 'PerceptualLoss', "CoBiLoss"
 ]
 
 
