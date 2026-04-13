@@ -86,6 +86,17 @@ class MambaFusionModel(SRModel):
         if self.ema_decay > 0:
             self.model_ema(decay=self.ema_decay)
 
+    def test(self):
+        if hasattr(self, 'net_g_ema'):
+            model = self.net_g_ema
+        else:
+            model = self.get_bare_model(self.net_g)
+
+        model.eval()
+        with torch.no_grad():
+            self.output = model(self.lq)
+        model.train()
+    
     def get_current_visuals(self):
         out_dict = OrderedDict()
         out_dict['lq'] = self.lq[:, self.lq.shape[1]//2].detach().cpu()  # show center frame
