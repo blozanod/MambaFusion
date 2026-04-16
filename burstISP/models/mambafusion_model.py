@@ -63,6 +63,12 @@ class MambaFusionModel(SRModel):
             l_total += l_cobi
             loss_dict['l_cobi'] = l_cobi
 
+        # Sobel Loss
+        if self.cri_sobel:
+            l_sobel = self.cri_sobel(self.output.float(), self.gt.float())
+            l_total += l_sobel
+            loss_dict['l_sobel'] = l_sobel
+
         # alignment loss
         if self.cri_align:
             # Extract and detach center frame
