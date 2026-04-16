@@ -63,10 +63,10 @@ class SRModel(BaseModel):
         else:
             self.cri_perceptual = None
 
-        if train_opt.get('sobel_opt'):
-            self.cri_sobel = build_loss(train_opt['sobel_opt']).to(self.device)
+        if train_opt.get('edge_opt'):
+            self.cri_edge = build_loss(train_opt['edge_opt']).to(self.device)
         else:
-            self.cri_sobel = None
+            self.cri_edge = None
 
         if train_opt.get('GAN_opt'):
             self.cri_GAN = build_loss(train_opt['GAN_opt']).to(self.device)

@@ -13,7 +13,6 @@ import numpy as np
 import pickle as pkl
 import matplotlib.pyplot as plt
 
-# FIX 1: Removed the unused 'folder_path' argument from this function signature
 def generate_processed_image(im, meta_data, return_np=False, external_norm_factor=None, gamma=True, smoothstep=True,
                              no_white_balance=False):
     """Processes the raw tensor into a viewable RGB image."""
@@ -48,7 +47,6 @@ def generate_processed_image(im, meta_data, return_np=False, external_norm_facto
         im_out = im_out.astype(np.uint8)
     return im_out
 
-# FIX 2: Updated parameters to accept exact paths directly instead of piecing them together here
 def process_pipeline(im_path, meta_path, output_path, visualize=False):
     # Load Image
     print(f"Loading {im_path}...")
@@ -67,7 +65,6 @@ def process_pipeline(im_path, meta_path, output_path, visualize=False):
 
     # Process Image
     print("Processing image...")
-    # FIX 3: Removed 'folder_path' from this call to match the updated signature
     rgb_image = generate_processed_image(im_tensor, meta_data, return_np=True)
 
     # Save Image

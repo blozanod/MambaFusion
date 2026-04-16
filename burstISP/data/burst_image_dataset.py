@@ -7,6 +7,7 @@ import os
 import torch
 import numpy as np
 import glob
+import random
 
 @DATASET_REGISTRY.register()
 class BurstImageDataset(data.Dataset):
@@ -61,6 +62,19 @@ class BurstImageDataset(data.Dataset):
                 img_lq = imfrombytes(f.read(), float32=False, flag='unchanged')
             img_lq = img_lq.astype(np.float32) / 65535.0 # Normalize 16-bit image
             lq_frames.append(img_lq)
+        
+        # Random Flips
+        if self.training:
+            hflip = random.random() < 0.5
+            vflip = random.random() < 0.5
+
+            if hflip:
+                img_gt = img_gt[:, ::-1, ...].copy()
+                lq_frames = [lq[:, ::-1, ...].copy() for lq in lq_frames]
+            
+            if vflip:
+                img_gt = img_gt[::-1, :, ...].copy()
+                lq_frames = [lq[::-1, :, ...].copy() for lq in lq_frames]
 
         # Transform to tensors
         img_gt = img2tensor(img_gt, bgr2rgb=True, float32=True)

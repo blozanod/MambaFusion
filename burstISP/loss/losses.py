@@ -607,3 +607,36 @@ class CoBiLoss(nn.Module):
         loss = -torch.log(cx + 1e-5)
 
         return self.loss_weight * loss.mean()
+
+@LOSS_REGISTRY.register()    
+class GWLoss(nn.Module):
+    def __init__(self, loss_weight=1.0, rgb_range=1.):
+        super(GWLoss, self).__init__()
+        self.rgb_range = rgb_range
+        self.loss_weight = loss_weight
+        
+        sobel_x = [[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]]
+        sobel_y = [[-1, -2, -1], [0, 0, 0], [1, 2, 1]]
+        
+        self.register_buffer('base_weight_x', torch.FloatTensor(sobel_x).view(1, 1, 3, 3))
+        self.register_buffer('base_weight_y', torch.FloatTensor(sobel_y).view(1, 1, 3, 3))
+
+    def forward(self, x1, x2):
+        x1 = torch.clamp(x1, min=0.0, max=1.0)
+        x2 = torch.clamp(x2, min=0.0, max=1.0)
+        b, c, h, w = x1.shape 
+        
+        weight_x = self.base_weight_x.expand(c, 1, 3, 3).type_as(x1)
+        weight_y = self.base_weight_y.expand(c, 1, 3, 3).type_as(x1)
+
+        Ix1 = F.conv2d(x1, weight_x, stride=1, padding=1, groups=c)
+        Ix2 = F.conv2d(x2, weight_x, stride=1, padding=1, groups=c)
+        Iy1 = F.conv2d(x1, weight_y, stride=1, padding=1, groups=c)
+        Iy2 = F.conv2d(x2, weight_y, stride=1, padding=1, groups=c)
+        
+        dx = torch.abs(Ix1 - Ix2)
+        dy = torch.abs(Iy1 - Iy2)
+        
+        loss = (1 + 4 * dx) * (1 + 4 * dy) * torch.abs(x1 - x2)
+
+        return torch.mean(loss) * self.loss_weight

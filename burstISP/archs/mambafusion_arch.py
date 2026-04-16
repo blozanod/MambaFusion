@@ -77,9 +77,11 @@ class MambaFusionNet(nn.Module):
         # Restore high-quality image from fused features
         output = self.restoration(fused_input)  # Shape: [B, C_out, H_out, W_out]
 
+        """
         if self.training:
             fusion_output = self.aux_upsampler(fused_input)
             return output, aligned_burst, fusion_output
+        """
         return output
 
 @ARCH_REGISTRY.register()

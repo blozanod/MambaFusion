@@ -24,11 +24,6 @@ class MambaFusionModel(SRModel):
                 self.cri_fusion = build_loss(train_opt['fusion_opt']).to(self.device)
             else:
                 self.cri_fusion = None
-            
-            if train_opt.get('cobi_opt'):
-                self.cri_cobi = build_loss(train_opt['cobi_opt']).to(self.device)
-            else:
-                self.cri_cobi = None
 
     def feed_data(self, data):
         self.lq = data['lq'].to(self.device) # [B, N, C, H, W]
@@ -63,11 +58,11 @@ class MambaFusionModel(SRModel):
             l_total += l_cobi
             loss_dict['l_cobi'] = l_cobi
 
-        # Sobel Loss
-        if self.cri_sobel:
-            l_sobel = self.cri_sobel(self.output.float(), self.gt.float())
-            l_total += l_sobel
-            loss_dict['l_sobel'] = l_sobel
+        # Edge Loss
+        if self.cri_edge:
+            l_edge = self.cri_edge(self.output.float(), self.gt.float())
+            l_total += l_edge
+            loss_dict['l_edge'] = l_edge
 
         # alignment loss
         if self.cri_align:
