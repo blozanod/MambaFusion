@@ -1,12 +1,12 @@
-# GENERATE TIME: Thu Mar 12 18:41:38 2026
+# GENERATE TIME: Sun Apr 12 17:32:48 2026
 # CMD:
-# train.py -opt config.yml --launcher pytorch
+# train.py -opt config_fusionloss.yml --launcher pytorch
 
 # config.yml
-name: MambaFusion_x4
+name: MambaFusion_x4_FusionLoss
 model_type: MambaFusionModel
 scale: 8
-num_gpu: 3
+num_gpu: 4
 manual_seed: 42
 
 # Dataset
@@ -18,9 +18,10 @@ datasets:
     num_frames: 5
     phase: train
     scale: 8
-    batch_size_per_gpu: 4
-    num_worker_per_gpu: 4
+    batch_size_per_gpu: 2
+    num_worker_per_gpu: 6
     dataset_enlarge_ratio: 1
+    grad_clip_norm: 1
 
   val:
     name: RealBSR_val
@@ -34,13 +35,23 @@ datasets:
 network_g:
   type: MambaFusionNet
   num_frames: 5
+  img_size: 80
   num_feat: 64
-  offset_groups: 8
+  offset_groups: 4
+  fusion_heads: 4
+  embed_dim: 174
+  d_state: 16
   scale: 8
-  depths: [6, 6, 6, 6]
-  num_heads: [6, 6, 6, 6]
+  depths: [6, 6, 6, 6, 6, 6]
+  num_heads: [6, 6, 6, 6, 6, 6]
+  window_size: 16
+  inner_rank: 64
+  num_tokens: 128
+  convffn_kernel_size: 5
   mlp_ratio: 2
-  upsampler: pixelshuffledirect
+  upsampler: 'pixelshuffle'
+  resi_connection: '1conv'
+  is_train: true
 
 # Training
 path:
@@ -50,39 +61,31 @@ path:
   experiments_root: ~
 
 train:
-  total_iter: 500000
-  warmup_iter: -1
+  total_iter: 100000
+  warmup_iter: 5000
 
   optim_g:
     type: AdamW
     lr: !!float 2e-4
     weight_decay: !!float 1e-4
-    betas: [0.9, 0.999]
+    betas: [0.9, 0.99]
+    eps: !!float 1e-6
+
 
   scheduler:
     type: CosineAnnealingRestartLR
-    periods: [150000, 250000, 400000]
-    restart_weights: [1, 0.5, 0.25]
+    periods: [50000, 125000, 200000]
+    restart_weights: [0.5, 0.25, 0.125]
     eta_min: !!float 1e-7
 
   pixel_opt:
     type: CharbonnierLoss
     loss_weight: 1.0
     reduction: mean
-  perceptual_opt:
-    type: PerceptualLoss
-    layer_weights:
-      relu3_4: 0.25
-      relu4_4: 0.25
-      relu5_4: 0.5
-    vgg_type: vgg19
-    use_input_norm: true
-    perceptual_weight: 0.05
-    style_weight: 0.0
-    criterion: l1
-  sobel_opt:
-    type: SobelLoss
-    loss_weight: 0.1
+  fusion_opt:
+      type: CharbonnierLoss
+      loss_weight: 0.1
+      reduction: mean
 
 # Validation
 val:

@@ -5,7 +5,6 @@
 #$ -pe smp 32        # Specify parallel environment and legal core size
 #$ -q gpu@@crc_a10           # Specify queue
 #$ -l gpu_card=4
-#$ -N MambaFusion_Train       # Specify job name
 #$ -cwd
 
 if [ -z "$1" ]; then

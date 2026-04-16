@@ -1,9 +1,14 @@
+# GENERATE TIME: Mon Apr 13 19:51:33 2026
+# CMD:
+# train.py -opt config_clean.yml --launcher pytorch
+
 # config.yml
-name: MambaFusion_x4_FullySupervised
+name: MambaFusion_x4_CleanRun
 model_type: MambaFusionModel
 scale: 8
 num_gpu: 4
 manual_seed: 42
+find_unused_parameters: true
 
 # Dataset
 datasets:
@@ -78,20 +83,6 @@ train:
     type: CharbonnierLoss
     loss_weight: 1.0
     reduction: mean
-  alignment_opt:
-      type: SobelLoss
-      loss_weight: 0.1
-      reduction: mean
-  fusion_opt:
-      type: CharbonnierLoss
-      loss_weight: 0.1
-      reduction: mean
-  cobi_opt:
-    type: CoBiLoss
-    loss_weight: 1.0
-    vgg_layer: 'relu4_4'
-    weight_sp: 0.1
-    band_width: 0.5
 
 # Validation
 val:
