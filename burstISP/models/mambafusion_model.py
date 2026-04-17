@@ -53,12 +53,6 @@ class MambaFusionModel(SRModel):
             l_total += l_pix
             loss_dict['l_pix'] = l_pix
 
-        # CoBi loss
-        if self.cri_cobi:
-            l_cobi = self.cri_cobi(self.output, self.gt)
-            l_total += l_cobi
-            loss_dict['l_cobi'] = l_cobi
-
         # Edge Loss
         if self.cri_edge:
             l_edge = self.cri_edge(self.output.float(), self.gt.float())
