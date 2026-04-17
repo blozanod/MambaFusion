@@ -64,7 +64,7 @@ class BurstImageDataset(data.Dataset):
             lq_frames.append(img_lq)
         
         # Random Flips
-        if self.training:
+        if self.opt['phase'] == 'train':
             hflip = random.random() < 0.5
             vflip = random.random() < 0.5
 

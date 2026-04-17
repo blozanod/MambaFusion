@@ -36,13 +36,14 @@ class MambaFusionModel(SRModel):
         
         # Forward Pass
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-            self.output, aligned_burst, fusion_output = self.net_g(self.lq)
+            #self.output, aligned_burst, fusion_output = self.net_g(self.lq)
+            self.output = self.net_g(self.lq)
 
         self.output = self.output.float()
-        aligned_burst = aligned_burst.float()
-        fusion_output = fusion_output.float()
+        #aligned_burst = aligned_burst.float()
+        #fusion_output = fusion_output.float()
 
-        ref_index = aligned_burst.shape[1] // 2
+        #ref_index = aligned_burst.shape[1] // 2
         l_total = 0
         loss_dict = OrderedDict()
 
@@ -65,6 +66,7 @@ class MambaFusionModel(SRModel):
             loss_dict['l_edge'] = l_edge
 
         # alignment loss
+        """
         if self.cri_align:
             # Extract and detach center frame
             ref_feat = aligned_burst[:, ref_index, :, :, :].detach()
@@ -89,6 +91,7 @@ class MambaFusionModel(SRModel):
             l_fusion = self.cri_fusion(fusion_output, self.gt)
             l_total += l_fusion
             loss_dict['l_fusion'] = l_fusion
+        """
 
         # Backpropagation
         l_total.backward()
