@@ -626,8 +626,8 @@ class GWLoss(nn.Module):
         x2 = torch.clamp(x2, min=0.0, max=1.0)
         b, c, h, w = x1.shape 
         
-        weight_x = self.base_weight_x.expand(c, 1, 3, 3).type_as(x1)
-        weight_y = self.base_weight_y.expand(c, 1, 3, 3).type_as(x1)
+        weight_x = self.base_weight_x.repeat(c, 1, 3, 3).type_as(x1)
+        weight_y = self.base_weight_y.repeat(c, 1, 3, 3).type_as(x1)
 
         Ix1 = F.conv2d(x1, weight_x, stride=1, padding=1, groups=c)
         Ix2 = F.conv2d(x2, weight_x, stride=1, padding=1, groups=c)
