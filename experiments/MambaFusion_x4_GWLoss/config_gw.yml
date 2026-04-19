@@ -1,3 +1,7 @@
+# GENERATE TIME: Fri Apr 17 19:07:43 2026
+# CMD:
+# train.py -opt config_gw.yml --launcher pytorch
+
 # config.yml
 name: MambaFusion_x4_GWLoss
 model_type: MambaFusionModel

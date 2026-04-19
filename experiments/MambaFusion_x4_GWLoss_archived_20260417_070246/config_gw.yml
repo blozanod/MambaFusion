@@ -1,17 +1,21 @@
+# GENERATE TIME: Thu Apr 16 23:15:32 2026
+# CMD:
+# train.py -opt config_gw.yml --launcher pytorch
+
 # config.yml
 name: MambaFusion_x4_GWLoss
 model_type: MambaFusionModel
 scale: 8
 num_gpu: 4
 manual_seed: 42
-find_unused_parameters: true
+find_unused_parameters: false
 
 # Dataset
 datasets:
   train:
     name: RealBSR_train
     type: BurstImageDataset
-    dataroot: /groups/rls/blozanod/MambaFusion/dataset/RealBSR_RAW_trainpatch
+    dataroot: /groups/rls/blozanod/MambaFusion/dataset/RealBSR_RAW_trainpatch_aligned
     num_frames: 5
     phase: train
     scale: 8
@@ -23,7 +27,7 @@ datasets:
   val:
     name: RealBSR_val
     type: BurstImageDataset
-    dataroot: /groups/rls/blozanod/MambaFusion/dataset/RealBSR_RAW_testpatch
+    dataroot: /groups/rls/blozanod/MambaFusion/dataset/RealBSR_RAW_testpatch_aligned
     num_frames: 5
     phase: val
     scale: 8

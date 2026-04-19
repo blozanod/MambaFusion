@@ -4,6 +4,7 @@
 #$ -m abe            # Send mail when job begins, ends and aborts
 #$ -pe smp 32        # Specify parallel environment and legal core size
 #$ -q gpu@@crc_a10           # Specify queue
+#$ -N MambaTraining
 #$ -l gpu_card=4
 #$ -cwd
 

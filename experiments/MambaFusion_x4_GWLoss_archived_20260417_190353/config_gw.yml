@@ -1,10 +1,14 @@
+# GENERATE TIME: Fri Apr 17 18:58:34 2026
+# CMD:
+# train.py -opt config_gw.yml --launcher pytorch
+
 # config.yml
 name: MambaFusion_x4_GWLoss
 model_type: MambaFusionModel
 scale: 8
 num_gpu: 4
 manual_seed: 42
-find_unused_parameters: true
+find_unused_parameters: false
 
 # Dataset
 datasets:
