@@ -47,7 +47,7 @@ class TemporalFusion(nn.Module):
         # Norm
         x_norm = self.norm(x_flat)
 
-        ref_feats_norm = x_norm[:, ref:ref+1, :, :]
+        ref_feats_norm = x_norm[:, ref:ref+1, :]
         ref_feats_unnorm = x_flat[:, ref:ref+1, :]
 
         # Calculate cross-attention for each window (query=frame 7 -> index 2, key=frame i)
