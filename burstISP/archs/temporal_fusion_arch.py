@@ -8,7 +8,7 @@ class TemporalFusion(nn.Module):
         super(TemporalFusion, self).__init__()
         self.num_frames = num_frames
         self.num_feat = num_feat
-        self.window_size = window_size
+        #self.window_size = window_size
 
         # Normalization
         self.norm = nn.LayerNorm(num_feat)
@@ -41,34 +41,34 @@ class TemporalFusion(nn.Module):
         # Reference image (frame 7 in dataset, middle index)
         ref = N // 2
 
-        # Partition into 20 windows size 16x16px (default)
-        # Rearranges from B, N, C, H, W -> B*Windows, N, Window Tokens, C
-        x_windows = rearrange(x, 'b n c (h w_h) (w w_w) -> (b h w) n (w_h w_w) c', w_h = self.window_size, w_w = self.window_size)
-        
-        # Norm
-        x_norm = self.norm(x_windows)
+        # Rearrange so that each pixel is an independent batch element, only calculating temporal attn
+        x_flat = rearrange(x, 'b n c h w -> (b h w) n c')
 
-        ref_feats = x_norm[:, ref:ref+1, :, :]
+        # Norm
+        x_norm = self.norm(x_flat)
+
+        ref_feats_norm = x_norm[:, ref:ref+1, :, :]
+        ref_feats_unnorm = x_flat[:, ref:ref+1, :]
 
         # Calculate cross-attention for each window (query=frame 7 -> index 2, key=frame i)
         # do this by compairing the window of each key to the query
         # Flatten frames and spatial dimensions for K and V 
         # Q: [Batch*Windows, Tokens, C] 
         # K, V: [Batch*Windows, N*Tokens, C]
-        x_query = self.q_proj(rearrange(ref_feats, 'bw 1 t c -> bw t c'))
-        x_key = self.k_proj(rearrange(x_norm, 'bw n t c -> bw (n t) c'))
-        x_value = self.v_proj(rearrange(x_norm, 'bw n t c -> bw (n t) c'))
+        x_query = self.q_proj(ref_feats_norm)
+        x_key = self.k_proj(x_norm)
+        x_value = self.v_proj(x_norm)
 
         attn_out, _ = self.attn(query=x_query, key=x_key, value=x_value)
 
         # Concat
-        out = attn_out + rearrange(ref_feats, 'bw 1 t c -> bw t c')
+        out = attn_out + ref_feats_unnorm
 
         # Norm + Feed fwd MLP
         out = out + self.mlp(self.norm2(out))
 
         # Reverse Partitioning
-        out = rearrange(out, '(b h w) (w_h w_w) c -> b c (h w_h) (w w_w)', b=B, h=H//self.window_size, w=W//self.window_size, w_h=self.window_size, w_w=self.window_size)
+        out = rearrange(out, '(b h w) 1 c -> b c h w', b=B, h=H, w=W)
         
         # Final Conv
         out = self.fusion_conv(out) # B C=num_feat H W

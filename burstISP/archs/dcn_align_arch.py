@@ -100,7 +100,10 @@ class BurstAlign(nn.Module):
         # Loop through each frame and align to the reference frame
         for i in range(N):
             if i == self.center_frame_idx:
-                aligned_feats.append(ref_feat_lv1)
+                # Pass center frame with offset mask of 0 through DCN to recieve same proj as other frames
+                offset_masks = torch.zeros(B, self.padded_offset_channels, H, W, device=x.device, dtype=x.dtype)
+                aligned_feat = self.dcn_lv1(curr_feat_lv1, offset_masks)
+                aligned_feats.append(aligned_feat)
                 continue
 
             # Select and concatenate current frame features

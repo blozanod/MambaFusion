@@ -1,5 +1,5 @@
 # config.yml
-name: MambaFusion_x4_GWLoss
+name: MambaFusion_x4_LongSkip
 model_type: MambaFusionModel
 scale: 8
 num_gpu: 4
@@ -63,17 +63,15 @@ train:
 
   optim_g:
     type: AdamW
-    lr: !!float 2e-4
-    weight_decay: !!float 1e-4
+    lr: !!float 1e-4
+    weight_decay: 0
     betas: [0.9, 0.99]
-    eps: !!float 1e-6
 
 
   scheduler:
-    type: CosineAnnealingRestartLR
-    periods: [55000, 125000, 200000]
-    restart_weights: [0.5, 0.25, 0.125]
-    eta_min: !!float 1e-7
+    type: MultiStepLR
+    milestones: [125000, 200000, 250000, 275000]
+    gamma: 0.5
 
   pixel_opt:
     type: CharbonnierLoss
@@ -81,7 +79,7 @@ train:
     reduction: mean
   edge_opt:
     type: GWLoss
-    loss_weight: 3.0
+    loss_weight: 0.0
 
 # Validation
 val:
