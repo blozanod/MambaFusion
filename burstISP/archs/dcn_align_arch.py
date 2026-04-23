@@ -7,9 +7,20 @@ from burstISP.archs.arch_util import DCNv4Block
 @ARCH_REGISTRY.register()
 class BurstAlign(nn.Module):
     """ BurstAlign module for aligning burst frames DCNv4
+
+    Alignment module using Pyramid, Cascading and Deformable convolution
+    (PCD). It is used in EDVR.
+
+    Ref:
+        EDVR: Video Restoration with Enhanced Deformable Convolutional Networks
     
     Using PCD align architecture from EDVR, but with Modulated Deform Conv, only 2 pyramid levels
     Will test effectiveness of 2 levels vs 3 levels to save on compute time
+
+    Args:
+    num_feat (int): Channel number of middle features. Default: 64
+    num_frames (int): Number of frames in the burst. Default: 5
+    offset_groups (int): Number of groups for DCN offset prediction. Default: 4
     """
     def __init__(self, num_feat=64, num_frames=5, offset_groups=4):
         super(BurstAlign, self).__init__()
@@ -17,120 +28,132 @@ class BurstAlign(nn.Module):
         self.center_frame_idx = num_frames // 2
         self.offset_groups = offset_groups
         self.K = offset_groups * (3*3) # 9 kernel points
+        self.padded_offset_channels = int(math.ceil((self.K * 3) / 8) * 8) # DCNv4 expects channel to be multiple of 8
 
-        self.padded_offset_channels = int(math.ceil((self.K * 3) / 8) * 8) # DCNv4 expects channels to be multiple of 8
-
-        # Shallow Feature Extraction
+        # Feature Extraction
         self.feat_extractor_lv1 = nn.Sequential(
             nn.Conv2d(4, num_feat, kernel_size=3, padding=1, stride=1),
-            nn.ReLU(inplace=True),
+            nn.LeakyReLU(0.1, inplace=True),
             nn.Conv2d(num_feat, num_feat, kernel_size=3, padding=1, stride=1),
-            nn.ReLU(inplace=True),
+            nn.LeakyReLU(0.1, inplace=True),
             nn.Conv2d(num_feat, num_feat, kernel_size=3, padding=1, stride=1),
-            nn.ReLU(inplace=True)
+            nn.LeakyReLU(0.1, inplace=True)
         )
-
-        # Shallow Feature Extraction for level 2 (downsampled by 2)
+        
         self.feat_extractor_lv2 = nn.Sequential(
-            nn.Conv2d(num_feat, num_feat, kernel_size=3, padding=1, stride=2), # stride=2 cuts H and W in half
-            nn.ReLU(inplace=True),
+            nn.Conv2d(num_feat, num_feat, kernel_size=3, padding=1, stride=2),
+            nn.LeakyReLU(0.1, inplace=True),
             nn.Conv2d(num_feat, num_feat, kernel_size=3, padding=1, stride=1),
-            nn.ReLU(inplace=True)
-        )
-
-        # Offset predictor for DCN
-        self.offset_predictor_lv1 = nn.Sequential(
-            nn.Conv2d(num_feat * 2, num_feat, kernel_size=3, padding=1, stride=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(num_feat, num_feat, kernel_size=3, padding=1, stride=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(num_feat, num_feat, kernel_size=3, padding=1, stride=1)
-        )
-
-        self.offset_predictor_lv2 = nn.Sequential(
-            nn.Conv2d(num_feat * 2, num_feat, kernel_size=3, padding=1, stride=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(num_feat, num_feat, kernel_size=3, padding=1, stride=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(num_feat, num_feat, kernel_size=3, padding=1, stride=1)
-        )
-
-        # For feature maps in lv2 to cascade to lv1 without interpolation
-        self.up_lv2 = nn.Sequential(
-            nn.Conv2d(num_feat, num_feat * 4, kernel_size=3, padding=1, stride=1),
-            nn.PixelShuffle(upscale_factor=2),
             nn.LeakyReLU(0.1, inplace=True)
         )
 
-        # Offset Projections (uncomment lv2 if performing DCNv4 on both levels)
-        self.offset_proj_lv1 = nn.Conv2d(num_feat, self.padded_offset_channels, kernel_size=3, padding=1)
-        # self.offset_proj_lv2 = nn.Conv2d(num_feat, self.padded_offset_channels, kernel_size=3, padding=1)
+        # Level 2 Alignment (offset -> DCN)
+        self.offset_conv_lv2 = nn.Sequential(
+            nn.Conv2d(num_feat * 2, num_feat, kernel_size=3, padding=1),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Conv2d(num_feat, num_feat, kernel_size=3, padding=1),
+            nn.LeakyReLU(0.1, inplace=True)
+        )
+        self.offset_proj_lv2 = nn.Conv2d(num_feat, self.padded_offset_channels, kernel_size=3, padding=1)
+        self.dcn_lv2 = DCNv4Block(channels=num_feat, kernel_size=3, pad=1, stride=1, groups=offset_groups)
 
-        # Modulated Deformable Convolution
+        # Level 1 Alignment (Offset lv1 -> Offset lv1 + lv2 -> DCN)
+        self.offset_conv_lv1_1 = nn.Sequential(
+            nn.Conv2d(num_feat * 2, num_feat, kernel_size=3, padding=1),
+            nn.LeakyReLU(0.1, inplace=True)
+        )
+        self.offset_conv_lv1_2 = nn.Sequential(
+            nn.Conv2d(num_feat * 2, num_feat, kernel_size=3, padding=1), # Takes concat of L1 and upsampled L2 offsets
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Conv2d(num_feat, num_feat, kernel_size=3, padding=1),
+            nn.LeakyReLU(0.1, inplace=True)
+        )
+        self.offset_proj_lv1 = nn.Conv2d(num_feat, self.padded_offset_channels, kernel_size=3, padding=1)
         self.dcn_lv1 = DCNv4Block(channels=num_feat, kernel_size=3, pad=1, stride=1, groups=offset_groups)
         
-        # Initialize final offset weights to 0
+        # L1 Feature Fusion (fusing L1 warped features with upsampled L2 warped features)
+        self.feat_fuse_lv1 = nn.Sequential(
+            nn.Conv2d(num_feat * 2, num_feat, kernel_size=3, padding=1),
+            nn.LeakyReLU(0.1, inplace=True)
+        )
+
+        # Cascading Refinement (Level 1)
+        self.casc_offset_conv = nn.Sequential(
+            nn.Conv2d(num_feat * 2, num_feat, kernel_size=3, padding=1),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Conv2d(num_feat, num_feat, kernel_size=3, padding=1),
+            nn.LeakyReLU(0.1, inplace=True)
+        )
+        self.casc_offset_proj = nn.Conv2d(num_feat, self.padded_offset_channels, kernel_size=3, padding=1)
+        self.casc_dcn = DCNv4Block(channels=num_feat, kernel_size=3, pad=1, stride=1, groups=offset_groups)
+
+        # Bilinear Upsampler
+        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+
         self._init_offset_weights()
     
-    # Initialize final conv layer to 0 for exploding gradients
     def _init_offset_weights(self):
-        nn.init.constant_(self.offset_proj_lv1.weight, 0)
-        nn.init.constant_(self.offset_proj_lv1.bias, 0)
+        # Initialize final projections to 0 for stability
+        for proj in[self.offset_proj_lv2, self.offset_proj_lv1, self.casc_offset_proj]:
+            nn.init.constant_(proj.weight, 0)
+            nn.init.constant_(proj.bias, 0)
     
     def forward(self, x):
-        B, N, C, H, W = x.size()  # [B, N, C, H, W]
+        B, N, C, H, W = x.size()
 
-        # Feature Extraction
-        burst_reshaped = x.reshape(B * N, C, H, W)  # [B*N, C, H, W]
+        burst_reshaped = x.view(B * N, C, H, W)
+        features_lv1 = self.feat_extractor_lv1(burst_reshaped).view(B, N, -1, H, W)
+        features_lv2 = self.feat_extractor_lv2(burst_reshaped.view(B * N, -1, H, W)).view(B, N, -1, H // 2, W // 2)
 
-        features_lv1 = self.feat_extractor_lv1(burst_reshaped)  # [B*N, num_feat, H, W]
-
-        features_lv2 = self.feat_extractor_lv2(features_lv1)  # [B*N, num_feat, H/2, W/2]
-        
-        # Reshape back to [B, N, num_feat, H, W]
-        features_lv1 = features_lv1.view(B, N, -1, H, W)  # [B, N, num_feat, H, W]
-        features_lv2 = features_lv2.view(B, N, -1, H // 2, W // 2)  # [B, N, num_feat, H/2, W/2]
-
-        # Select center reference features
         ref_feat_lv1 = features_lv1[:, self.center_frame_idx, :, :, :]
         ref_feat_lv2 = features_lv2[:, self.center_frame_idx, :, :, :]
 
-        aligned_feats = []
+        aligned_feats =[]
 
-        # Loop through each frame and align to the reference frame
         for i in range(N):
             if i == self.center_frame_idx:
-                # Pass center frame with offset mask of 0 through DCN to recieve same proj as other frames
-                offset_masks = torch.zeros(B, self.padded_offset_channels, H, W, device=x.device, dtype=x.dtype)
-                aligned_feat = self.dcn_lv1(curr_feat_lv1, offset_masks)
-                aligned_feats.append(aligned_feat)
+                aligned_feats.append(ref_feat_lv1)
                 continue
 
-            # Select and concatenate current frame features
             curr_feat_lv1 = features_lv1[:, i, :, :, :]
             curr_feat_lv2 = features_lv2[:, i, :, :, :]
 
-            # LV2 Coarse Alignment
-            concat_lv2 = torch.cat([ref_feat_lv2, curr_feat_lv2], dim=1)  # [B, 2*num_feat, H/2, W/2]
-            motion_feats_lv2 = self.offset_predictor_lv2(concat_lv2)
+            # Lv2 Alignment
+            concat_lv2 = torch.cat([curr_feat_lv2, ref_feat_lv2], dim=1)
+            offset_feat_lv2 = self.offset_conv_lv2(concat_lv2)
+            offset_mask_lv2 = self.offset_proj_lv2(offset_feat_lv2)
+            
+            # Lv2 DCN
+            aligned_lv2 = self.dcn_lv2(curr_feat_lv2, offset_mask_lv2)
 
-            # PixelShuffle Upsampling
-            motion_lv2_upsampled = self.up_lv2(motion_feats_lv2)  # [B, num_feat, H, W]
+            # Lv1 Alignment
+            # Upsample Lv2 offsets and aligned feats
+            up_offset_feat_lv2 = self.upsample(offset_feat_lv2) 
+            up_aligned_lv2 = self.upsample(aligned_lv2)
 
-            # LV1 Fine Alignment
-            concat_lv1 = torch.cat([ref_feat_lv1, curr_feat_lv1], dim=1)
-            motion_feats_lv1 = self.offset_predictor_lv1(concat_lv1)
+            # Lv1 Offsets (no Lv2)
+            concat_lv1 = torch.cat([curr_feat_lv1, ref_feat_lv1], dim=1)
+            offset_feat_lv1_base = self.offset_conv_lv1_1(concat_lv1)
+            
+            # Lv1 Offsets + Lv2 Offsets (concat)
+            offset_feat_lv1 = self.offset_conv_lv1_2(torch.cat([offset_feat_lv1_base, up_offset_feat_lv2], dim=1))
+            offset_mask_lv1 = self.offset_proj_lv1(offset_feat_lv1)
+            
+            # Lv1 DCN
+            aligned_lv1 = self.dcn_lv1(curr_feat_lv1, offset_mask_lv1)
+            
+            # Lv1 Aligned Feats + Lv2 Aligned Feats (upsampled, concat)
+            aligned_lv1_fused = self.feat_fuse_lv1(torch.cat([aligned_lv1, up_aligned_lv2], dim=1))
 
-            # Cascade
-            cascaded_motions = motion_feats_lv1 + motion_lv2_upsampled
+            # Cascading refinement
+            # Compare the newly aligned feature to the reference again
+            concat_casc = torch.cat([aligned_lv1_fused, ref_feat_lv1], dim=1)
+            casc_offset_feat = self.casc_offset_conv(concat_casc)
+            casc_offset_mask = self.casc_offset_proj(casc_offset_feat)
+            
+            # Final DCN (refinement)
+            final_aligned = self.casc_dcn(aligned_lv1_fused, casc_offset_mask)
+            
+            aligned_feats.append(final_aligned)
 
-            # Projection to DCNv4 format
-            offset_masks = self.offset_proj_lv1(cascaded_motions)
-
-            # DCNv4 Conv
-            aligned_feat = self.dcn_lv1(curr_feat_lv1, offset_masks)
-            aligned_feats.append(aligned_feat)
-
-        # Stack aligned features
-        aligned_feats = torch.stack(aligned_feats, dim=1)  # [B, N, num_feat, H, W]
-        return aligned_feats
+        return torch.stack(aligned_feats, dim=1)
