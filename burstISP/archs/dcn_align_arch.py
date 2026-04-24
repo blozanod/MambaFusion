@@ -31,6 +31,8 @@ class BurstAlign(nn.Module):
         self.padded_offset_channels = int(math.ceil((self.K * 3) / 8) * 8)  # 112
 
         # Pre-computed scale vector for offset mask tensor
+        # the offsets are the only things that are scaled. If the mask was scaled, 
+        # ie. by just multiplying by 2, the softmax temp in DCN would be ruined
         scale = torch.ones(1, self.padded_offset_channels, 1, 1)
         for k in range(self.K):
             base = k * 3

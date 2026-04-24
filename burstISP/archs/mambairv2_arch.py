@@ -10,10 +10,13 @@ from einops import rearrange, repeat
 
 
 def index_reverse(index):
-    index_r = torch.zeros_like(index)
-    ind = torch.arange(0, index.shape[-1]).to(index.device)
-    for i in range(index.shape[0]):
-        index_r[i, index[i, :]] = ind
+    batch_size, seq_len = index.shape
+    device = index.device
+    
+    src = torch.arange(seq_len, device=device).expand(batch_size, seq_len)
+    
+    index_r = torch.empty_like(index).scatter_(1, index, src)
+    
     return index_r
 
 
