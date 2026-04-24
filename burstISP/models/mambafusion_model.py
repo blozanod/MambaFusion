@@ -52,18 +52,16 @@ class MambaFusionModel(SRModel):
         epsilon = 1e-6
         out_float = self.output.float()
         gt_float = self.gt.float()
+        FIXED_EXPOSURE = 4.0 
 
-        # Unified Exposure Scaling
-        exposure_scale = 1.0 / (gt_float.mean() * 5.0 + epsilon)
-        
-        out_scaled = (out_float * exposure_scale).clamp(0.0, 1.0)
-        gt_scaled = (gt_float * exposure_scale).clamp(0.0, 1.0)
+        out_scaled = torch.abs(out_float * FIXED_EXPOSURE) + epsilon
+        gt_scaled = torch.abs(gt_float * FIXED_EXPOSURE) + epsilon
 
         # Gamma Compression 
-        out_gamma = (out_scaled + epsilon) ** (1.0 / 2.2)
-        gt_gamma = (gt_scaled + epsilon) ** (1.0 / 2.2)
+        out_gamma = out_scaled ** (1.0 / 2.2)
+        gt_gamma = gt_scaled ** (1.0 / 2.2)
 
-        # Smoothstep
+        # Smoothstep (Safe to keep if you want filmic contrast)
         out_final = 3 * out_gamma ** 2 - 2 * out_gamma ** 3
         gt_final = 3 * gt_gamma ** 2 - 2 * gt_gamma ** 3
 

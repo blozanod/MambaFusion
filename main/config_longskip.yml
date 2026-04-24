@@ -36,6 +36,7 @@ network_g:
   num_feat: 64
   offset_groups: 4
   fusion_heads: 4
+  fusion_window_size: 4
   embed_dim: 174
   d_state: 16
   scale: 8
