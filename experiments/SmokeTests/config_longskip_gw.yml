@@ -1,9 +1,9 @@
-# GENERATE TIME: Fri Apr 17 18:45:54 2026
+# GENERATE TIME: Fri Apr 24 15:50:02 2026
 # CMD:
-# train.py -opt config_gw.yml --launcher pytorch
+# train.py -opt config_longskip.yml --launcher pytorch
 
 # config.yml
-name: MambaFusion_x4_GWLoss
+name: MambaFusion_x4_NewBurstAlign_GW
 model_type: MambaFusionModel
 scale: 8
 num_gpu: 4
@@ -56,7 +56,7 @@ network_g:
 
 # Training
 path:
-  pretrain_network_g: ~
+  pretrain_network_g: /groups/rls/blozanod/MambaFusion/experiments/MambaFusion_x4_NewBurstAlign/models/net_g_35000.pth
   strict_load_g: true
   resume_state: ~
   experiments_root: ~
@@ -67,17 +67,15 @@ train:
 
   optim_g:
     type: AdamW
-    lr: !!float 2e-4
-    weight_decay: !!float 1e-4
+    lr: !!float 1e-4
+    weight_decay: 0
     betas: [0.9, 0.99]
-    eps: !!float 1e-6
 
 
   scheduler:
-    type: CosineAnnealingRestartLR
-    periods: [55000, 125000, 200000]
-    restart_weights: [0.5, 0.25, 0.125]
-    eta_min: !!float 1e-7
+    type: MultiStepLR
+    milestones: [125000, 200000, 250000, 275000]
+    gamma: 0.5
 
   pixel_opt:
     type: CharbonnierLoss
@@ -85,7 +83,7 @@ train:
     reduction: mean
   edge_opt:
     type: GWLoss
-    loss_weight: 3.0
+    loss_weight: 0.09
 
 # Validation
 val:

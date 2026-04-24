@@ -47,34 +47,34 @@ class MambaFusionModel(SRModel):
         l_total = 0
         loss_dict = OrderedDict()
 
+        # Applies part of ISP from visualize_results.py
+        # Differentiates edges from noise
+        epsilon = 1e-6
+        out_float = self.output.float()
+        gt_float = self.gt.float()
+
+        # Unified Exposure Scaling
+        exposure_scale = 1.0 / (gt_float.mean() * 5.0 + epsilon)
+        
+        out_scaled = (out_float * exposure_scale).clamp(0.0, 1.0)
+        gt_scaled = (gt_float * exposure_scale).clamp(0.0, 1.0)
+
+        # Gamma Compression 
+        out_gamma = (out_scaled + epsilon) ** (1.0 / 2.2)
+        gt_gamma = (gt_scaled + epsilon) ** (1.0 / 2.2)
+
+        # Smoothstep
+        out_final = 3 * out_gamma ** 2 - 2 * out_gamma ** 3
+        gt_final = 3 * gt_gamma ** 2 - 2 * gt_gamma ** 3
+
         # pixel loss
         if self.cri_pix:
-            l_pix = self.cri_pix(self.output, self.gt)
+            l_pix = self.cri_pix(out_final, gt_final)
             l_total += l_pix
             loss_dict['l_pix'] = l_pix
 
         # Edge Loss
         if self.cri_edge:
-            # Applies part of ISP from visualize_results.py
-            # Differentiates edges from noise
-            epsilon = 1e-6
-            out_float = self.output.float()
-            gt_float = self.gt.float()
-
-            # Unified Exposure Scaling
-            exposure_scale = 1.0 / (gt_float.mean() * 5.0 + epsilon)
-            
-            out_scaled = (out_float * exposure_scale).clamp(0.0, 1.0)
-            gt_scaled = (gt_float * exposure_scale).clamp(0.0, 1.0)
-
-            # Gamma Compression 
-            out_gamma = (out_scaled + epsilon) ** (1.0 / 2.2)
-            gt_gamma = (gt_scaled + epsilon) ** (1.0 / 2.2)
-
-            # Smoothstep
-            out_final = 3 * out_gamma ** 2 - 2 * out_gamma ** 3
-            gt_final = 3 * gt_gamma ** 2 - 2 * gt_gamma ** 3
-
             l_edge = self.cri_edge(out_final, gt_final)
             l_total += l_edge
             loss_dict['l_edge'] = l_edge

@@ -38,12 +38,6 @@ class MambaFusionNet(nn.Module):
         self.is_train = opt['is_train']
         self.fusion_heads = opt['fusion_heads']
 
-        # Long skip connection
-        self.global_skip = nn.Sequential(
-            nn.Conv2d(4, 3 * (self.opt['scale'] ** 2), kernel_size=3, padding=1),
-            nn.PixelShuffle(self.opt['scale'])
-        )
-
         # Alignment module
         self.alignment = BurstAlign(num_feat=self.num_feat, num_frames=self.num_frames, offset_groups=self.offset_groups)
 
@@ -85,9 +79,6 @@ class MambaFusionNet(nn.Module):
         fused_input = self.fusion(aligned_burst)
 
         # Restore high-quality image from fused features
-        deep_residual = self.restoration(fused_input)  # Shape: [B, C_out, H_out, W_out]
-
-        # Add long skip connection
-        output = base_img + deep_residual
+        output = self.restoration(fused_input)  # Shape: [B, C_out, H_out, W_out]
 
         return output
