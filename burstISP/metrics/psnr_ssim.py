@@ -126,3 +126,24 @@ def calculate_ssim(img, img2, crop_border, input_order='HWC', test_y_channel=Fal
     for i in range(img.shape[2]):
         ssims.append(_ssim(img[..., i], img2[..., i]))
     return np.array(ssims).mean()
+
+@METRIC_REGISTRY.register()
+def calculate_psnr_srgb(img, img2, crop_border, input_order='HWC', **kwargs):
+    # img and img2 arrive in [0, 255]. Convert to [0.0, 1.0] float
+    img = img.astype(np.float64) / 255.0
+    img2 = img2.astype(np.float64) / 255.0
+    
+    # Apply Exposure and clamp
+    img = np.clip(img * 4.0, 0.0, 1.0)
+    img2 = np.clip(img2 * 4.0, 0.0, 1.0)
+    
+    # Apply Gamma
+    img = np.power(img, 1.0 / 2.2) * 255.0
+    img2 = np.power(img2, 1.0 / 2.2) * 255.0
+    
+    return calculate_psnr(img, img2, crop_border, input_order, **kwargs)
+
+@METRIC_REGISTRY.register()
+def calculate_psnr_linear(img, img2, crop_border, input_order='HWC', **kwargs):
+    # Standard PSNR on the raw linear output
+    return calculate_psnr(img, img2, crop_border, input_order, **kwargs)

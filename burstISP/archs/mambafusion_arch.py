@@ -68,6 +68,35 @@ class MambaFusionNet(nn.Module):
             upsampler=self.opt['upsampler'],
             resi_connection=self.opt['resi_connection'],
             use_checkpoint=False)
+        
+        # Apply the initialization
+        self._init_nearest_neighbor(self.global_skip, self.opt['scale'])
+        
+    def _init_nearest_neighbor(self, module, scale, in_channels=4, out_rgb_channels=3):
+        """
+        Initializes the global skip connection to nearest-neighbor upsampling instead of Kalman init
+
+        Ensures the rest of the network does not have to learn how to undo the random noise provided by
+        Kalman initialization.
+        """
+        conv = module[0]
+        in_map = [0, 1, 3]
+        
+        with torch.no_grad():
+            # Zero out all weights and biases to remove random initialization
+            conv.weight.zero_()
+            if conv.bias is not None:
+                conv.bias.zero_()
+                
+            # Set the center pixel of the 3x3 kernel to 1.0 for the matching channels
+            # PyTorch PixelShuffle expects channels in blocks of (scale ** 2)
+            for c in range(out_rgb_channels):
+                for s in range(scale ** 2):
+                    out_channel_idx = c * (scale ** 2) + s
+                    in_channel_idx = in_map[c]
+                    # weight shape: [out_channels, in_channels, kernel_H, kernel_W]
+                    # We target the center of the 3x3 kernel: index (1, 1)
+                    conv.weight[out_channel_idx, in_channel_idx, 1, 1] = 1.0
 
     def forward(self, x):
         center_idx = self.num_frames // 2
@@ -88,6 +117,6 @@ class MambaFusionNet(nn.Module):
         deep_residual = self.restoration(fused_input)  # Shape: [B, C_out, H_out, W_out]
 
         # Add long skip connection
-        output = base_img + deep_residual
+        output = base_img + (deep_residual*0.1)
 
         return output

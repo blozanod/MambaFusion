@@ -12,18 +12,6 @@ class MambaFusionModel(SRModel):
     """MambaFusion model for image restoration."""
     def __init__(self, opt):
         super(MambaFusionModel, self).__init__(opt)
-        if self.is_train:
-            train_opt = self.opt['train']
-            
-            if train_opt.get('alignment_opt'):
-                self.cri_align = build_loss(train_opt['alignment_opt']).to(self.device)
-            else:
-                self.cri_align = None
-
-            if train_opt.get('fusion_opt'):
-                self.cri_fusion = build_loss(train_opt['fusion_opt']).to(self.device)
-            else:
-                self.cri_fusion = None
 
     def feed_data(self, data):
         self.lq = data['lq'].to(self.device) # [B, N, C, H, W]
@@ -40,10 +28,6 @@ class MambaFusionModel(SRModel):
             self.output = self.net_g(self.lq)
 
         self.output = self.output.float()
-        #aligned_burst = aligned_burst.float()
-        #fusion_output = fusion_output.float()
-
-        #ref_index = aligned_burst.shape[1] // 2
         l_total = 0
         loss_dict = OrderedDict()
 
@@ -58,10 +42,10 @@ class MambaFusionModel(SRModel):
         gt_scaled = torch.abs(gt_float * FIXED_EXPOSURE) + epsilon
 
         # Gamma Compression 
-        out_gamma = out_scaled ** (1.0 / 2.2)
-        gt_gamma = gt_scaled ** (1.0 / 2.2)
+        out_gamma = torch.clamp(out_scaled ** (1.0 / 2.2), 0.0, 1.0)
+        gt_gamma = torch.clamp(gt_scaled ** (1.0 / 2.2), 0.0, 1.0)
 
-        # Smoothstep (Safe to keep if you want filmic contrast)
+        # Smoothstep
         out_final = 3 * out_gamma ** 2 - 2 * out_gamma ** 3
         gt_final = 3 * gt_gamma ** 2 - 2 * gt_gamma ** 3
 
@@ -76,34 +60,6 @@ class MambaFusionModel(SRModel):
             l_edge = self.cri_edge(out_final, gt_final)
             l_total += l_edge
             loss_dict['l_edge'] = l_edge
-
-        # alignment loss
-        """
-        if self.cri_align:
-            # Extract and detach center frame
-            ref_feat = aligned_burst[:, ref_index, :, :, :].detach()
-            
-            l_align = 0
-            num_frames = aligned_burst.shape[1]
-            
-            # Compute Charbonnier between each aligned neighbor and the reference
-            for i in range(num_frames):
-                if i != ref_index:
-                    l_align += self.cri_align(aligned_burst[:, i, :, :, :], ref_feat)
-            
-            # Average the loss across the 4 neighboring frames
-            l_align = l_align / (num_frames - 1)
-            
-            # Add alignment loss to total loss
-            l_total += l_align
-            loss_dict['l_align'] = l_align
-
-        # fusion loss
-        if self.cri_fusion:
-            l_fusion = self.cri_fusion(fusion_output, self.gt)
-            l_total += l_fusion
-            loss_dict['l_fusion'] = l_fusion
-        """
 
         # Backpropagation
         l_total.backward()

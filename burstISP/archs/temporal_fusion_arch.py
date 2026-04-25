@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 from einops import rearrange
 from burstISP.utils.registry import ARCH_REGISTRY
@@ -9,6 +10,14 @@ class TemporalFusion(nn.Module):
         self.num_frames = num_frames
         self.num_feat = num_feat
         self.window_size = window_size
+
+        # Positional and Temporal Encodings
+        self.spatial_pos_embed = nn.Parameter(torch.zeros(1, 1, window_size * window_size, num_feat)) # [1, 1, pixels_per_window, C]
+        self.temp_pos_embed = nn.Parameter(torch.zeros(1, num_frames, 1, num_feat)) # [1, num_frames, 1, C]
+
+        # Encoding Initialization
+        nn.init.trunc_normal_(self.spatial_pos_embed, std=0.02)
+        nn.init.trunc_normal_(self.temp_pos_embed, std=0.02)
 
         # Normalization
         self.norm1 = nn.LayerNorm(num_feat)
@@ -43,7 +52,10 @@ class TemporalFusion(nn.Module):
         # Partition image into non-overlapping windows
         x_win = rearrange(x, 'b n c (h ws1) (w ws2) -> (b h w) n (ws1 ws2) c', ws1=ws, ws2=ws) # [B * num_windows, N, pixels_per_window, C]
 
-        # 2. Normalize
+        # Add positional and temporal encodings to window
+        x_win = x_win + self.spatial_pos_embed + self.temp_pos_embed
+
+        # Normalize
         x_norm = self.norm1(x_win)
 
         # Query, Key, and Value

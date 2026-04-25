@@ -8,6 +8,7 @@ import torch
 import numpy as np
 import glob
 import random
+import pickle as pkl
 
 @DATASET_REGISTRY.register()
 class BurstImageDataset(data.Dataset):
@@ -32,6 +33,16 @@ class BurstImageDataset(data.Dataset):
     def __getitem__(self, index):
         burst_dir = self.burst_folders[index]
         count = self.count
+
+        # Get .pkl file
+        pkl_file = glob.glob(os.path.join(burst_dir, '*.pkl'))[0]
+        with open(pkl_file, "rb") as f:
+            meta_data = pkl.load(f)
+
+        # Extract relevant metadata
+        bl = np.array(meta_data['black_level'], dtype=np.float32) / 65535.0
+        wb = np.array(meta_data['cam_wb'], dtype=np.float32)
+        wb_gain = wb / wb[1]
         
         # Get GT image
         gt_img_path = glob.glob(os.path.join(burst_dir, '*_x4_rgb.png'))[0]
@@ -39,6 +50,14 @@ class BurstImageDataset(data.Dataset):
             img_gt = imfrombytes(f.read(), float32=False, flag='unchanged')
         
         img_gt = img_gt.astype(np.float32) / 65535.0 # Normalize 16-bit image
+
+        # Apply metadata to GT image
+        if not meta_data.get('black_level_subtracted', False):
+            img_gt = img_gt - bl[[0, 1, 3]].reshape(1, 1, 3)
+        if not meta_data.get('while_balance_applied', False):
+            img_gt = img_gt * wb_gain[[0, 1, 3]].reshape(1, 1, 3)
+        
+        img_gt = np.clip(img_gt, 0.0, 1.0)
 
         # Get lq image paths
         lq_frames = []
@@ -60,7 +79,16 @@ class BurstImageDataset(data.Dataset):
             lq_path = lq_img_paths[idx]
             with open(lq_path, 'rb') as f:
                 img_lq = imfrombytes(f.read(), float32=False, flag='unchanged')
+                
             img_lq = img_lq.astype(np.float32) / 65535.0 # Normalize 16-bit image
+
+            # Apply metadata to LQ image
+            if not meta_data.get('black_level_subtracted', False):
+                img_lq = img_lq - bl.reshape(1, 1, 4)
+            if not meta_data.get('while_balance_applied', False):
+                img_lq = img_lq * wb_gain.reshape(1, 1, 4)
+            
+            img_lq = np.clip(img_lq, 0.0, 1.0)
             lq_frames.append(img_lq)
         
         # Random Flips

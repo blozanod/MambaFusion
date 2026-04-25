@@ -1,5 +1,5 @@
 # config.yml
-name: MambaFusion_x4_LongSkip
+name: MambaFusion_x4_DesperationRun
 model_type: MambaFusionModel
 scale: 8
 num_gpu: 4
@@ -71,7 +71,7 @@ train:
 
   scheduler:
     type: MultiStepLR
-    milestones: [125000, 200000, 250000, 275000]
+    milestones: [30000, 50000, 75000, 90000]
     gamma: 0.5
 
   pixel_opt:
@@ -80,17 +80,28 @@ train:
     reduction: mean
   edge_opt:
     type: GWLoss
-    loss_weight: 0.0
+    loss_weight: 2.0
 
 # Validation
 val:
   val_freq: 5000
   save_img: false
   metrics:
-    psnr:
-      type: calculate_psnr
+    psnr_srgb:
+      type: calculate_psnr_srgb
       crop_border: 4
       test_y_channel: false
+      better: higher
+    psnr_linear:
+      type: calculate_psnr_linear
+      crop_border: 4
+      test_y_channel: false
+      better: higher
+    ssim:
+      type: calculate_ssim
+      crop_border: 4
+      test_y_channel: false
+      better: higher
 
 # Logging
 logger:
