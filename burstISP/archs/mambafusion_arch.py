@@ -43,7 +43,7 @@ class MambaFusionNet(nn.Module):
 
         # Long skip connection
         self.global_skip = GlobalSkipConnection(scale=self.opt['scale'])
-        self.alpha_residual = nn.Parameter(torch.tensor(0.1))
+        self.alpha_residual = nn.Parameter(torch.zeros(1))
 
         # Alignment module
         self.alignment = BurstAlign(num_feat=self.num_feat, num_frames=self.num_frames, offset_groups=self.offset_groups)
