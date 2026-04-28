@@ -38,26 +38,22 @@ class MambaFusionModel(SRModel):
         gt_float = self.gt.float()
         FIXED_EXPOSURE = 4.0 
 
-        out_scaled = torch.abs(out_float * FIXED_EXPOSURE) + epsilon
-        gt_scaled = torch.abs(gt_float * FIXED_EXPOSURE) + epsilon
+        out_scaled = out_float * FIXED_EXPOSURE
+        gt_scaled = gt_float * FIXED_EXPOSURE
 
         # Gamma Compression 
-        out_gamma = torch.clamp(out_scaled ** (1.0 / 2.2), 0.0, 1.0)
-        gt_gamma = torch.clamp(gt_scaled ** (1.0 / 2.2), 0.0, 1.0)
-
-        # Smoothstep
-        out_final = 3 * out_gamma ** 2 - 2 * out_gamma ** 3
-        gt_final = 3 * gt_gamma ** 2 - 2 * gt_gamma ** 3
+        out_gamma = torch.sign(out_scaled) * (torch.abs(out_scaled) + epsilon) ** (1.0 / 2.2)
+        gt_gamma = torch.abs(gt_scaled + epsilon) ** (1.0 / 2.2)
 
         # pixel loss
         if self.cri_pix:
-            l_pix = self.cri_pix(out_final, gt_final)
+            l_pix = self.cri_pix(out_gamma, gt_gamma)
             l_total += l_pix
             loss_dict['l_pix'] = l_pix
 
         # Edge Loss
         if self.cri_edge:
-            l_edge = self.cri_edge(out_final, gt_final)
+            l_edge = self.cri_edge(out_gamma, gt_gamma)
             l_total += l_edge
             loss_dict['l_edge'] = l_edge
 

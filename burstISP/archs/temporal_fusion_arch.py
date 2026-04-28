@@ -53,17 +53,20 @@ class TemporalFusion(nn.Module):
         x_win = rearrange(x, 'b n c (h ws1) (w ws2) -> (b h w) n (ws1 ws2) c', ws1=ws, ws2=ws) # [B * num_windows, N, pixels_per_window, C]
 
         # Add positional and temporal encodings to window
-        x_win = x_win + self.spatial_pos_embed + self.temp_pos_embed
+        x_pos = x_win + self.spatial_pos_embed + self.temp_pos_embed
 
         # Normalize
-        x_norm = self.norm1(x_win)
+        x_pos_norm = self.norm1(x_pos)
 
         # Query, Key, and Value
-        x_query = x_norm[:, ref, :, :]
-        x_kv = rearrange(x_norm, 'b n p c -> b (n p) c')
+        x_query = x_pos_norm[:, ref, :, :]
+        x_k = rearrange(x_pos_norm, 'b n p c -> b (n p) c')
+
+        x_win_norm = self.norm1(x_win)
+        x_v = rearrange(x_win_norm, 'b n p c -> b (n p) c')
 
         # Multi-head Cross Attention
-        attn_out, _ = self.attn(query=x_query, key=x_kv, value=x_kv) # [B*num_windows, 16, C]
+        attn_out, _ = self.attn(query=x_query, key=x_k, value=x_v) # [B*num_windows, 16, C]
 
         # Residual Connection (Add unnormalized reference frame)
         ref_unnorm = x_win[:, ref, :, :]

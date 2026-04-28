@@ -9,6 +9,7 @@ import numpy as np
 import glob
 import random
 import pickle as pkl
+import cv2
 
 @DATASET_REGISTRY.register()
 class BurstImageDataset(data.Dataset):
@@ -49,6 +50,12 @@ class BurstImageDataset(data.Dataset):
         with open(gt_img_path, 'rb') as f:
             img_gt = imfrombytes(f.read(), float32=False, flag='unchanged')
         
+        # Transform into RGB
+        if img_gt.shape[2] == 3:
+            img_gt = cv2.cvtColor(img_gt, cv2.COLOR_BGR2RGB)
+        elif img_gt.shape[2] == 4:
+            img_gt = cv2.cvtColor(img_gt, cv2.COLOR_BGRA2RGBA)
+        
         img_gt = img_gt.astype(np.float32) / 65535.0 # Normalize 16-bit image
 
         # Apply metadata to GT image
@@ -79,7 +86,12 @@ class BurstImageDataset(data.Dataset):
             lq_path = lq_img_paths[idx]
             with open(lq_path, 'rb') as f:
                 img_lq = imfrombytes(f.read(), float32=False, flag='unchanged')
-                
+            
+            if img_lq.shape[2] == 3:
+                img_lq = cv2.cvtColor(img_lq, cv2.COLOR_BGR2RGB)
+            elif img_lq.shape[2] == 4:
+                img_lq = cv2.cvtColor(img_lq, cv2.COLOR_BGRA2RGBA) 
+ 
             img_lq = img_lq.astype(np.float32) / 65535.0 # Normalize 16-bit image
 
             # Apply metadata to LQ image
@@ -105,8 +117,8 @@ class BurstImageDataset(data.Dataset):
                 lq_frames = [lq[::-1, :, ...].copy() for lq in lq_frames]
 
         # Transform to tensors
-        img_gt = img2tensor(img_gt, bgr2rgb=True, float32=True)
-        img_lqs = img2tensor(lq_frames, bgr2rgb=True, float32=True)
+        img_gt = img2tensor(img_gt, bgr2rgb=False, float32=True)
+        img_lqs = img2tensor(lq_frames, bgr2rgb=False, float32=True)
 
         img_lqs = torch.stack(img_lqs, axis=0) # shape: (N, C, H, W) where N is number of frames in burst
 

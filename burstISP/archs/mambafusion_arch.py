@@ -1,5 +1,8 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+import numpy as np
+import cv2
 from burstISP.utils.registry import ARCH_REGISTRY
 from burstISP.archs.mambairv2_arch import MambaIRv2
 from burstISP.archs.dcn_align_arch import BurstAlign
@@ -39,10 +42,8 @@ class MambaFusionNet(nn.Module):
         self.fusion_heads = opt['fusion_heads']
 
         # Long skip connection
-        self.global_skip = nn.Sequential(
-            nn.Conv2d(4, 3 * (self.opt['scale'] ** 2), kernel_size=3, padding=1),
-            nn.PixelShuffle(self.opt['scale'])
-        )
+        self.global_skip = GlobalSkipConnection(scale=self.opt['scale'])
+        self.alpha_residual = nn.Parameter(torch.tensor(0.1))
 
         # Alignment module
         self.alignment = BurstAlign(num_feat=self.num_feat, num_frames=self.num_frames, offset_groups=self.offset_groups)
@@ -68,35 +69,6 @@ class MambaFusionNet(nn.Module):
             upsampler=self.opt['upsampler'],
             resi_connection=self.opt['resi_connection'],
             use_checkpoint=False)
-        
-        # Apply the initialization
-        self._init_nearest_neighbor(self.global_skip, self.opt['scale'])
-        
-    def _init_nearest_neighbor(self, module, scale, in_channels=4, out_rgb_channels=3):
-        """
-        Initializes the global skip connection to nearest-neighbor upsampling instead of Kalman init
-
-        Ensures the rest of the network does not have to learn how to undo the random noise provided by
-        Kalman initialization.
-        """
-        conv = module[0]
-        in_map = [0, 1, 3]
-        
-        with torch.no_grad():
-            # Zero out all weights and biases to remove random initialization
-            conv.weight.zero_()
-            if conv.bias is not None:
-                conv.bias.zero_()
-                
-            # Set the center pixel of the 3x3 kernel to 1.0 for the matching channels
-            # PyTorch PixelShuffle expects channels in blocks of (scale ** 2)
-            for c in range(out_rgb_channels):
-                for s in range(scale ** 2):
-                    out_channel_idx = c * (scale ** 2) + s
-                    in_channel_idx = in_map[c]
-                    # weight shape: [out_channels, in_channels, kernel_H, kernel_W]
-                    # We target the center of the 3x3 kernel: index (1, 1)
-                    conv.weight[out_channel_idx, in_channel_idx, 1, 1] = 1.0
 
     def forward(self, x):
         center_idx = self.num_frames // 2
@@ -117,6 +89,54 @@ class MambaFusionNet(nn.Module):
         deep_residual = self.restoration(fused_input)  # Shape: [B, C_out, H_out, W_out]
 
         # Add long skip connection
-        output = base_img + (deep_residual*0.1)
+        output = base_img + (deep_residual*self.alpha_residual)
 
         return output
+    
+class GlobalSkipConnection(nn.Module):
+    """
+    Global skip connection baseline definition and application
+
+    Performs non-learnable Malvar-He-Cutler demosaicing and bicubic upsampling to generate strong
+    baseline. Model only has to learn residual from here.
+    """
+    def __init__(self, scale):
+        super(GlobalSkipConnection, self).__init__()
+        self.scale = scale
+        self.rem_scale = self.scale // 2
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        device = x.device
+        
+        # Detach to CPU 
+        x_cpu = x.detach().float().cpu().numpy()
+        
+        # Scale to 16 bit
+        x_uint16 = np.clip(x_cpu * 65535.0, 0, 65535).astype(np.uint16)
+        
+        out_batch =[]
+        for i in range(B):
+            # Unpack the 4-channel image into a 1-channel 2H x 2W Bayer array
+            bayer = np.zeros((H * 2, W * 2), dtype=np.uint16)
+            bayer[0::2, 0::2] = x_uint16[i, 0, :, :] # R
+            bayer[0::2, 1::2] = x_uint16[i, 1, :, :] # G
+            bayer[1::2, 0::2] = x_uint16[i, 2, :, :] # G
+            bayer[1::2, 1::2] = x_uint16[i, 3, :, :] # B
+            
+            # Malvar-He-Cutler Demosaicing
+            rgb_uint16 = cv2.cvtColor(bayer, cv2.COLOR_BayerRG2RGB_EA)
+            out_batch.append(rgb_uint16)
+            
+        # Normalize to fp32
+        out_np = np.stack(out_batch, axis=0) #[B, 2H, 2W, 3]
+        out_np = out_np.astype(np.float32) / 65535.0
+        
+        # Cast back to tensor
+        out_tensor = torch.from_numpy(out_np).permute(0, 3, 1, 2).to(device)
+        
+        # Upample with Bilinear Interpolation
+        out = F.interpolate(out_tensor, scale_factor=self.rem_scale, mode='bicubic', align_corners=False)
+        
+        # Return bf16
+        return out.to(x.dtype)

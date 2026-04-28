@@ -81,10 +81,10 @@ def process_pipeline(im_path, meta_path, output_path, visualize=False):
         plt.show()
 
 if __name__ == '__main__':
-    input_folder = Path("inferences/V7_GW10k")
+    input_folder = Path("inferences/DesperationA")
     
     # FIX 4: Created a dedicated output folder so original files are not overwritten
-    output_folder = Path("inferences/V7_GW10k")
+    output_folder = Path("inferences/DesperationA")
     output_folder.mkdir(parents=True, exist_ok=True)
 
     # Iterate over all PNG files in the folder
