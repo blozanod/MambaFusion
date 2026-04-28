@@ -55,13 +55,18 @@ def process_pipeline(im_path, meta_path, output_path, visualize=False):
         print(f"Error: Could not find image at {im_path}")
         return
         
-    im_raw = np.transpose(im_raw, (2, 0, 1)).astype(np.int16)
-    im_tensor = torch.from_numpy(im_raw).float()
+    im_raw = cv2.cvtColor(im_raw, cv2.COLOR_BGR2RGB)
+    im_raw = np.transpose(im_raw, (2, 0, 1)).astype(np.float32)
+    im_tensor = torch.from_numpy(im_raw) / 65535.0
 
     # Load Metadata
     print(f"Loading {meta_path}...")
     with open(meta_path, "rb") as f:
         meta_data = pkl.load(f)
+
+    # Set these flags to True so generate_processed_image doesn't apply them a second time.
+    meta_data['black_level_subtracted'] = True
+    meta_data['while_balance_applied'] = True
 
     # Process Image
     print("Processing image...")
@@ -72,19 +77,11 @@ def process_pipeline(im_path, meta_path, output_path, visualize=False):
     cv2.imwrite(str(output_path), bgr_image)
     print(f"Success! Processed image saved to: {output_path}")
 
-    # Visualize the image using Matplotlib
-    if visualize:
-        plt.figure(figsize=(10, 8))
-        plt.imshow(rgb_image)
-        plt.title("Processed Image (RGB)")
-        plt.axis('off')
-        plt.show()
-
 if __name__ == '__main__':
-    input_folder = Path("inferences/DesperationA")
+    input_folder = Path("inferences/DesperationB")
     
     # FIX 4: Created a dedicated output folder so original files are not overwritten
-    output_folder = Path("inferences/DesperationA")
+    output_folder = Path("inferences/DesperationB")
     output_folder.mkdir(parents=True, exist_ok=True)
 
     # Iterate over all PNG files in the folder

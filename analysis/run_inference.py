@@ -6,7 +6,7 @@ import yaml
 import torch
 import cv2
 import numpy as np
-
+import pickle as pkl
 
 # Add the parent directory to sys.path to access the burstISP modules
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -58,7 +58,7 @@ def main():
     model.eval()
 
     # 4. Load the input burst frames
-    input_dirs = ["010_0023","010_0104","013_0265","010_0292","020_0543",
+    input_dirs =["010_0023","010_0104","013_0265","010_0292","020_0543",
                   "014_0674","006_0291","007_0065","020_0047","027_0388"]
     for directory in input_dirs:
         input_path = os.path.join(args.input_dir, directory)
@@ -72,6 +72,15 @@ def main():
         if len(lq_img_paths) < num_frames:
             raise ValueError(f"Expected at least {num_frames} images in {args.input_dir}, but found {len(lq_img_paths)}.")
         
+        # Load metadata (.pkl) to match training data preparation
+        pkl_file = glob.glob(os.path.join(input_path, '*.pkl'))[0]
+        with open(pkl_file, "rb") as f:
+            meta_data = pkl.load(f)
+
+        bl = np.array(meta_data['black_level'], dtype=np.float32) / 65535.0
+        wb = np.array(meta_data['cam_wb'], dtype=np.float32)
+        wb_gain = wb / wb[1]
+
         # Get indices for requested frames, isolating the true center frame
         true_center_idx = len(lq_img_paths) // 2
         other_indices = list(range(len(lq_img_paths)))
@@ -82,21 +91,29 @@ def main():
         indices = np.random.choice(other_indices, min(num_frames - 1, len(other_indices)), replace=False)
         indices = sorted(indices)
 
-        half_idx = num_frames // 2
-        indices.insert(half_idx, true_center_idx)  # Insert center frame index in the middle
+        ref_idx = num_frames // 2
+        indices.insert(ref_idx, true_center_idx)  # Insert center frame index in the middle
 
-        lq_frames = []
+        lq_frames =[]
         for idx in indices:
             lq_path = lq_img_paths[idx]
             with open(lq_path, 'rb') as f:
                 img_lq = imfrombytes(f.read(), float32=False, flag='unchanged')
-            
+                
             # Normalize 16-bit image to [0, 1] range as done in BurstImageDataset
             img_lq = img_lq.astype(np.float32) / 65535.0 
+
+            # Apply metadata to input to match training perfectly
+            if not meta_data.get('black_level_subtracted', False):
+                img_lq = img_lq - bl.reshape(1, 1, 4)
+            if not meta_data.get('while_balance_applied', False):
+                img_lq = img_lq * wb_gain.reshape(1, 1, 4)
+            
+            img_lq = np.clip(img_lq, 0.0, 1.0)
             lq_frames.append(img_lq)
             
-        # Convert images to tensors
-        tensor_imgs = img2tensor(lq_frames, bgr2rgb=True, float32=True)
+        # Convert images to tensors, ensuring we DO NOT scramble the channels (bgr2rgb=False)
+        tensor_imgs = img2tensor(lq_frames, bgr2rgb=False, float32=True)
         
         # Stack the burst into [1, N, C, H, W] for the model forward pass
         input_tensor = torch.stack(tensor_imgs, dim=0).unsqueeze(0).to(device)
@@ -109,6 +126,7 @@ def main():
         # 6. Post-process and save output
         print("Processing output...")
 
+        os.makedirs(args.output_path, exist_ok=True)
         save_filename = os.path.join(args.output_path, f"{directory}_restored.png")
         
         # Manually convert [0, 1] tensor back to a 16-bit numpy array
@@ -126,7 +144,7 @@ def main():
         
         # Create directories and save the 16-bit image
         imwrite(output_img, save_filename)
-        print(f"Output saved successfully to {os.path.abspath(args.output_path)}")
+        print(f"Output saved successfully to {os.path.abspath(save_filename)}")
 
 if __name__ == '__main__':
     main()

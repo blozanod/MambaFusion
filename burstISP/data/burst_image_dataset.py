@@ -86,11 +86,6 @@ class BurstImageDataset(data.Dataset):
             lq_path = lq_img_paths[idx]
             with open(lq_path, 'rb') as f:
                 img_lq = imfrombytes(f.read(), float32=False, flag='unchanged')
-            
-            if img_lq.shape[2] == 3:
-                img_lq = cv2.cvtColor(img_lq, cv2.COLOR_BGR2RGB)
-            elif img_lq.shape[2] == 4:
-                img_lq = cv2.cvtColor(img_lq, cv2.COLOR_BGRA2RGBA) 
  
             img_lq = img_lq.astype(np.float32) / 65535.0 # Normalize 16-bit image
 
