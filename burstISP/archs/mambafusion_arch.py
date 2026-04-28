@@ -73,7 +73,9 @@ class MambaFusionNet(nn.Module):
     def forward(self, x):
         center_idx = self.num_frames // 2
         center_raw = x[:, center_idx, :, :, :].float()
-        
+
+        base_img = self.global_skip(center_raw)
+
         # Align features from burst frames
         with torch.amp.autocast("cuda", enabled=False):
             aligned_burst = self.alignment(x.float())  # Shape: [B, N, C, H, W]

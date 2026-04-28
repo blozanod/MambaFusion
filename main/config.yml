@@ -59,8 +59,8 @@ path:
   experiments_root: ~
 
 train:
-  total_iter: 25000
-  warmup_iter: 2000
+  total_iter: 100000
+  warmup_iter: 7500
 
   optim_g:
     type: AdamW
