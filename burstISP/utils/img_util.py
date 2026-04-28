@@ -170,3 +170,54 @@ def crop_border(imgs, crop_border):
             return [v[crop_border:-crop_border, crop_border:-crop_border, ...] for v in imgs]
         else:
             return imgs[crop_border:-crop_border, crop_border:-crop_border, ...]
+        
+def generate_processed_image_channel3(im, meta_data, return_np=False, black_level_substracted=True, external_norm_factor=None,
+                                      gamma=True, smoothstep=True, no_white_balance=False):
+    """
+    Simulates an ISP pipeline to visualize linear RGB outputs.
+    """
+    # Scale back up to native 14-bit data range
+    im = im * meta_data.get('norm_factor', 16383.0)
+    device = im.device
+
+    # FIX: Use local variables! Never mutate dictionary references passed into a function.
+    if not meta_data.get('black_level_subtracted', False) and not black_level_substracted:
+        bl_arr = meta_data['black_level']
+        # Convert [R, G1, G2, B] to[R, (G1+G2)/2, B] safely
+        bl_tensor = torch.tensor([bl_arr[0], (bl_arr[1] + bl_arr[2]) / 2.0, bl_arr[3]], dtype=torch.float32, device=device)
+        im = im - bl_tensor.view(3, 1, 1)
+
+    # FIX: Corrected typo 'while_balance' to 'white_balance'
+    if not meta_data.get('white_balance_applied', False) and not no_white_balance:
+        wb_arr = meta_data['cam_wb']
+        # Convert[R, G1, G2, B] to [R, (G1+G2)/2, B] safely
+        wb_tensor = torch.tensor([wb_arr[0], (wb_arr[1] + wb_arr[2]) / 2.0, wb_arr[3]], dtype=torch.float32, device=device)
+        # Normalize so Green = 1.0
+        wb_tensor = wb_tensor / wb_tensor[1] 
+        im = im * wb_tensor.view(3, 1, 1)
+
+    im_out = im
+
+    # Digital Auto-Exposure
+    if external_norm_factor is None:
+        im_out = im_out / (im_out.mean() * 5.0) # Maps mean to 20% gray
+    else:
+        im_out = im_out / external_norm_factor
+
+    # Handle interpolation overshoots and highlights
+    im_out = im_out.clamp(0.0, 1.0)
+
+    # sRGB Gamma curve
+    if gamma:
+        im_out = im_out ** (1.0 / 2.2)
+
+    # S-curve contrast
+    if smoothstep:
+        im_out = 3 * im_out ** 2 - 2 * im_out ** 3
+
+    if return_np:
+        # Move to CPU before converting to NumPy
+        im_out = im_out.detach().cpu().permute(1, 2, 0).numpy() * 255.0
+        im_out = im_out.astype(np.uint8)
+
+    return im_out

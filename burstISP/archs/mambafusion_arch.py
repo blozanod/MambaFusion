@@ -95,10 +95,10 @@ class MambaFusionNet(nn.Module):
     
 class GlobalSkipConnection(nn.Module):
     """
-    Global skip connection baseline definition and application
+    Global skip connection baseline definition and application.
 
-    Performs non-learnable Malvar-He-Cutler demosaicing and bicubic upsampling to generate strong
-    baseline. Model only has to learn residual from here.
+    Performs non-learnable Malvar-He-Cutler demosaicing and bicubic upsampling to generate a strong
+    baseline. The model only has to learn the residual from here.
     """
     def __init__(self, scale):
         super(GlobalSkipConnection, self).__init__()
@@ -109,34 +109,35 @@ class GlobalSkipConnection(nn.Module):
         B, C, H, W = x.shape
         device = x.device
         
-        # Detach to CPU 
+        # Detach to CPU for OpenCV operations
         x_cpu = x.detach().float().cpu().numpy()
         
-        # Scale to 16 bit
+        # Scale to 16 bit representation 
         x_uint16 = np.clip(x_cpu * 65535.0, 0, 65535).astype(np.uint16)
         
         out_batch =[]
         for i in range(B):
-            # Unpack the 4-channel image into a 1-channel 2H x 2W Bayer array
+            # Unpack the 4-channel image into a 1-channel 2H x 2W Bayer array 
             bayer = np.zeros((H * 2, W * 2), dtype=np.uint16)
             bayer[0::2, 0::2] = x_uint16[i, 0, :, :] # R
-            bayer[0::2, 1::2] = x_uint16[i, 1, :, :] # G
-            bayer[1::2, 0::2] = x_uint16[i, 2, :, :] # G
+            bayer[0::2, 1::2] = x_uint16[i, 1, :, :] # G1
+            bayer[1::2, 0::2] = x_uint16[i, 2, :, :] # G2
             bayer[1::2, 1::2] = x_uint16[i, 3, :, :] # B
             
             # Malvar-He-Cutler Demosaicing
-            rgb_uint16 = cv2.cvtColor(bayer, cv2.COLOR_BayerRG2RGB_EA)
+            rgb_uint16 = cv2.cvtColor(bayer, cv2.COLOR_BayerBG2RGB_EA)
             out_batch.append(rgb_uint16)
             
         # Normalize to fp32
-        out_np = np.stack(out_batch, axis=0) #[B, 2H, 2W, 3]
+        out_np = np.stack(out_batch, axis=0) # [B, 2H, 2W, 3]
         out_np = out_np.astype(np.float32) / 65535.0
         
-        # Cast back to tensor
+        # Cast back to tensor and return to original device
         out_tensor = torch.from_numpy(out_np).permute(0, 3, 1, 2).to(device)
         
-        # Upample with Bilinear Interpolation
+        # Upsample with Bicubic Interpolation
         out = F.interpolate(out_tensor, scale_factor=self.rem_scale, mode='bicubic', align_corners=False)
         
-        # Return bf16
+        # Return matched dtype (e.g. bfloat16 mixed precision protection)
         return out.to(x.dtype)
+

@@ -55,9 +55,9 @@ def process_pipeline(im_path, meta_path, output_path, visualize=False):
         print(f"Error: Could not find image at {im_path}")
         return
         
-    im_raw = cv2.cvtColor(im_raw, cv2.COLOR_BGR2RGB)
+    # im_raw = cv2.cvtColor(im_raw, cv2.COLOR_BGR2RGB)
     im_raw = np.transpose(im_raw, (2, 0, 1)).astype(np.float32)
-    im_tensor = torch.from_numpy(im_raw) / 65535.0
+    im_tensor = torch.from_numpy(im_raw) / 16383.0
 
     # Load Metadata
     print(f"Loading {meta_path}...")
@@ -78,10 +78,10 @@ def process_pipeline(im_path, meta_path, output_path, visualize=False):
     print(f"Success! Processed image saved to: {output_path}")
 
 if __name__ == '__main__':
-    input_folder = Path("inferences/DesperationB")
+    input_folder = Path("inferences/DesperationC")
     
     # FIX 4: Created a dedicated output folder so original files are not overwritten
-    output_folder = Path("inferences/DesperationB")
+    output_folder = Path("inferences/DesperationC")
     output_folder.mkdir(parents=True, exist_ok=True)
 
     # Iterate over all PNG files in the folder
