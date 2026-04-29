@@ -4,7 +4,7 @@ from torch.nn import functional as F
 
 from burstISP.utils.registry import MODEL_REGISTRY
 from burstISP.models.sr_model import SRModel
-from burstISP.loss import build_loss
+from burstISP.utils import get_root_logger
 
 
 @MODEL_REGISTRY.register()
@@ -79,6 +79,29 @@ class MambaFusionModel(SRModel):
         with torch.no_grad():
             self.output = model(self.lq)
         model.train()
+
+    def _log_validation_metric_values(self, current_iter, dataset_name, tb_logger):
+        log_str = f'Validation {dataset_name}\n'
+        for metric, value in self.metric_results.items():
+            log_str += f'\t # {metric}: {value:.4f}'
+            if hasattr(self, 'best_metric_results'):
+                log_str += (f'\tBest: {self.best_metric_results[dataset_name][metric]["val"]:.4f} @ '
+                            f'{self.best_metric_results[dataset_name][metric]["iter"]} iter')
+            log_str += '\n'
+
+        # Log ReZero alpha
+        bare_model = self.get_bare_model(self.net_g)
+        if hasattr(bare_model, 'global_skip') and hasattr(bare_model.global_skip, 'alpha_residual'):
+            alpha_val = bare_model.global_skip.alpha_residual.item()
+            log_str += f'\t # rezero_alpha: {alpha_val:.10f}\n'
+
+        logger = get_root_logger()
+        logger.info(log_str)
+        if tb_logger:
+            for metric, value in self.metric_results.items():
+                tb_logger.add_scalar(f'metrics/{dataset_name}/{metric}', value, current_iter)
+            if hasattr(bare_model, 'global_skip') and hasattr(bare_model.global_skip, 'alpha'):
+                tb_logger.add_scalar('train/rezero_alpha', alpha_val, current_iter)
     
     def get_current_visuals(self):
         out_dict = OrderedDict()
