@@ -1,9 +1,9 @@
-# GENERATE TIME: Thu Apr 23 21:58:12 2026
+# GENERATE TIME: Mon Apr 27 21:49:39 2026
 # CMD:
-# train.py -opt config_longskip.yml --launcher pytorch
+# train.py -opt config.yml --launcher pytorch
 
 # config.yml
-name: MambaFusion_x4_NewBurstAlign
+name: MambaFusion_x4_Desperation2
 model_type: MambaFusionModel
 scale: 8
 num_gpu: 4
@@ -40,6 +40,7 @@ network_g:
   num_feat: 64
   offset_groups: 4
   fusion_heads: 4
+  fusion_window_size: 4
   embed_dim: 174
   d_state: 16
   scale: 8
@@ -74,8 +75,7 @@ train:
 
   scheduler:
     type: MultiStepLR
-    milestones: [125000, 200000, 250000, 275000]
-    gamma: 0.5
+    milestones: [30000, 50000, 75000, 90000]
 
   pixel_opt:
     type: CharbonnierLoss
@@ -83,17 +83,28 @@ train:
     reduction: mean
   edge_opt:
     type: GWLoss
-    loss_weight: 0.0
+    loss_weight: 2.0
 
 # Validation
 val:
   val_freq: 5000
   save_img: false
   metrics:
-    psnr:
-      type: calculate_psnr
+    psnr_srgb:
+      type: calculate_psnr_srgb
       crop_border: 4
       test_y_channel: false
+      better: higher
+    psnr_linear:
+      type: calculate_psnr_linear
+      crop_border: 4
+      test_y_channel: false
+      better: higher
+    ssim:
+      type: calculate_ssim
+      crop_border: 4
+      test_y_channel: false
+      better: higher
 
 # Logging
 logger:

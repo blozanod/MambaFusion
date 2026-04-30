@@ -91,8 +91,8 @@ class MambaFusionModel(SRModel):
 
         # Log ReZero alpha
         bare_model = self.get_bare_model(self.net_g)
-        if hasattr(bare_model, 'global_skip') and hasattr(bare_model.global_skip, 'alpha_residual'):
-            alpha_val = bare_model.global_skip.alpha_residual.item()
+        if hasattr(bare_model, 'alpha_residual'):
+            alpha_val = bare_model.alpha_residual.item()
             log_str += f'\t # rezero_alpha: {alpha_val:.10f}\n'
 
         logger = get_root_logger()
@@ -100,7 +100,7 @@ class MambaFusionModel(SRModel):
         if tb_logger:
             for metric, value in self.metric_results.items():
                 tb_logger.add_scalar(f'metrics/{dataset_name}/{metric}', value, current_iter)
-            if hasattr(bare_model, 'global_skip') and hasattr(bare_model.global_skip, 'alpha'):
+            if hasattr(bare_model, 'alpha_residual'):
                 tb_logger.add_scalar('train/rezero_alpha', alpha_val, current_iter)
     
     def get_current_visuals(self):
