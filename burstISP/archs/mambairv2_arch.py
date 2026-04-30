@@ -923,6 +923,12 @@ class MambaIRv2(nn.Module):
 
         self.apply(self._init_weights)
 
+        # Zero Initialize the final Layer of MambaIRv2
+        if self.upsampler in ['pixelshuffle', 'nearest+conv', '']:
+            nn.init.zeros_(self.conv_last.weight)
+            if self.conv_last.bias is not None:
+                nn.init.zeros_(self.conv_last.bias)
+
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
             trunc_normal_(m.weight, std=.02)

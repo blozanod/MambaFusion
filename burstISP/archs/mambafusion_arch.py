@@ -43,7 +43,7 @@ class MambaFusionNet(nn.Module):
 
         # Long skip connection
         self.global_skip = GlobalSkipConnection(scale=self.opt['scale'])
-        self.alpha_residual = nn.Parameter(torch.zeros(1))
+        # self.alpha_residual = nn.Parameter(torch.zeros(1)) - removed in favor of zero-init last conv in irv2
 
         # Alignment module
         self.alignment = BurstAlign(num_feat=self.num_feat, num_frames=self.num_frames, offset_groups=self.offset_groups)
@@ -89,7 +89,7 @@ class MambaFusionNet(nn.Module):
         deep_residual = self.restoration(fused_input)  # Shape: [B, C_out, H_out, W_out]
 
         # Add long skip connection
-        output = base_img + (deep_residual*self.alpha_residual)
+        output = base_img + deep_residual
 
         return output
     
