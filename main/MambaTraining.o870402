@@ -1385,3 +1385,9 @@ Version Information:
 2026-04-30 19:10:36,248 INFO: [Mamba..][epoch: 35, iter:  93,100, lr:(9.999e-05,)] [eta: 2 days, 12:31:11, time (data): 0.835 (0.002)] l_pix: 5.0343e-02 l_edge: 2.2107e-01 
 2026-04-30 19:11:59,921 INFO: [Mamba..][epoch: 35, iter:  93,200, lr:(9.999e-05,)] [eta: 2 days, 12:28:38, time (data): 0.836 (0.002)] l_pix: 4.3272e-02 l_edge: 2.3390e-01 
 2026-04-30 19:13:23,574 INFO: [Mamba..][epoch: 35, iter:  93,300, lr:(9.999e-05,)] [eta: 2 days, 12:26:05, time (data): 0.835 (0.002)] l_pix: 3.7424e-02 l_edge: 1.6317e-01 
+2026-04-30 19:14:47,271 INFO: [Mamba..][epoch: 35, iter:  93,400, lr:(9.999e-05,)] [eta: 2 days, 12:23:32, time (data): 0.837 (0.002)] l_pix: 3.6086e-02 l_edge: 1.1407e-01 
+2026-04-30 19:16:10,966 INFO: [Mamba..][epoch: 35, iter:  93,500, lr:(9.999e-05,)] [eta: 2 days, 12:20:59, time (data): 0.835 (0.002)] l_pix: 4.6342e-02 l_edge: 1.8137e-01 
+2026-04-30 19:17:34,578 INFO: [Mamba..][epoch: 35, iter:  93,600, lr:(9.999e-05,)] [eta: 2 days, 12:18:26, time (data): 0.836 (0.002)] l_pix: 5.4806e-02 l_edge: 2.3835e-01 
+2026-04-30 19:18:58,170 INFO: [Mamba..][epoch: 35, iter:  93,700, lr:(9.999e-05,)] [eta: 2 days, 12:15:53, time (data): 0.837 (0.002)] l_pix: 5.5418e-02 l_edge: 2.6166e-01 
+2026-04-30 19:21:03,208 INFO: [Mamba..][epoch: 36, iter:  93,800, lr:(9.999e-05,)] [eta: 2 days, 12:14:52, time (data): 1.146 (0.312)] l_pix: 4.5184e-02 l_edge: 1.9646e-01 
+2026-04-30 19:22:27,233 INFO: [Mamba..][epoch: 36, iter:  93,900, lr:(9.999e-05,)] [eta: 2 days, 12:12:20, time (data): 0.839 (0.002)] l_pix: 4.1731e-02 l_edge: 1.8747e-01 

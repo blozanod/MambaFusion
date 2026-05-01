@@ -1,5 +1,5 @@
 # config.yml
-name: MambaFusion_FinalRun
+name: MambaFusion_ControlNet
 model_type: MambaFusionModel
 scale: 8
 num_gpu: 4
