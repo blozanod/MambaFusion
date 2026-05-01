@@ -53,7 +53,12 @@ def create_train_val_dataloader(opt, logger):
             num_iter_per_epoch = math.ceil(
                 len(train_set) * dataset_enlarge_ratio / (dataset_opt['batch_size_per_gpu'] * opt['world_size']))
             total_iters = int(opt['train']['total_iter'])
-            total_epochs = math.ceil(total_iters / (num_iter_per_epoch))
+
+            # Gradient Accumulation Logic
+            accumulation_steps = opt['train'].get('accumulation_steps', 1)
+            total_micro_iters = total_iters * accumulation_steps
+
+            total_epochs = math.ceil(total_micro_iters / num_iter_per_epoch)
             logger.info('Training statistics:'
                         f'\n\tNumber of train images: {len(train_set)}'
                         f'\n\tDataset enlarge ratio: {dataset_enlarge_ratio}'
@@ -135,9 +140,12 @@ def train_pipeline(root_path):
         logger.info(f"Resuming training from epoch: {resume_state['epoch']}, iter: {resume_state['iter']}.")
         start_epoch = resume_state['epoch']
         current_iter = resume_state['iter']
+        accumulation_steps = opt['train'].get('accumulation_steps', 1)
+        micro_step = current_iter * accumulation_steps
     else:
         start_epoch = 0
         current_iter = 0
+        micro_step = 0
 
     # create message logger (formatted outputs)
     msg_logger = MessageLogger(opt, current_iter, tb_logger)
@@ -168,42 +176,47 @@ def train_pipeline(root_path):
         while train_data is not None:
             data_timer.record()
 
-            current_iter += 1
-            if current_iter > total_iters:
-                break
-            # update learning rate
-            model.update_learning_rate(current_iter, warmup_iter=opt['train'].get('warmup_iter', -1))
+            micro_step += 1
             # training
             model.feed_data(train_data)
-            model.optimize_parameters(current_iter)
+            model.optimize_parameters(micro_step)
 
-            iter_timer.record()
-            if current_iter == 1:
-                # reset start time in msg_logger for more accurate eta_time
-                # not work in resume mode
-                msg_logger.reset_start_time()
-            # log
-            if current_iter % opt['logger']['print_freq'] == 0:
-                log_vars = {'epoch': epoch, 'iter': current_iter}
-                log_vars.update({'lrs': model.get_current_learning_rate()})
-                log_vars.update({'time': iter_timer.get_avg_time(), 'data_time': data_timer.get_avg_time()})
-                log_vars.update(model.get_current_log())
-                msg_logger(log_vars)
+            accumulation_steps = opt['train'].get('accumulation_steps', 1)
+            if micro_step % accumulation_steps == 0:
+                current_iter += 1
+                if current_iter > total_iters:
+                    break
+                # update learning rate
+                model.update_learning_rate(current_iter, warmup_iter=opt['train'].get('warmup_iter', -1))
 
-            # save models and training states
-            if current_iter % opt['logger']['save_checkpoint_freq'] == 0:
-                logger.info('Saving models and training states.')
-                model.save(epoch, current_iter)
+                iter_timer.record()
+                if current_iter == 1:
+                    # reset start time in msg_logger for more accurate eta_time
+                    # not work in resume mode
+                    msg_logger.reset_start_time()
+                # log
+                if current_iter % opt['logger']['print_freq'] == 0:
+                    log_vars = {'epoch': epoch, 'iter': current_iter}
+                    log_vars.update({'lrs': model.get_current_learning_rate()})
+                    log_vars.update({'time': iter_timer.get_avg_time(), 'data_time': data_timer.get_avg_time()})
+                    log_vars.update(model.get_current_log())
+                    msg_logger(log_vars)
 
-            # validation
-            if opt.get('val') is not None and (current_iter % opt['val']['val_freq'] == 0):
-                if len(val_loaders) > 1:
-                    logger.warning('Multiple validation datasets are *only* supported by SRModel.')
-                for val_loader in val_loaders:
-                    model.validation(val_loader, current_iter, tb_logger, opt['val']['save_img'])
+                # save models and training states
+                if current_iter % opt['logger']['save_checkpoint_freq'] == 0:
+                    logger.info('Saving models and training states.')
+                    model.save(epoch, current_iter)
 
+                # validation
+                if opt.get('val') is not None and (current_iter % opt['val']['val_freq'] == 0):
+                    if len(val_loaders) > 1:
+                        logger.warning('Multiple validation datasets are *only* supported by SRModel.')
+                    for val_loader in val_loaders:
+                        model.validation(val_loader, current_iter, tb_logger, opt['val']['save_img'])
+
+                iter_timer.start()
+            
             data_timer.start()
-            iter_timer.start()
             train_data = prefetcher.next()
         # end of iter
 

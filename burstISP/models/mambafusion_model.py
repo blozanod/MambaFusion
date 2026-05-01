@@ -1,6 +1,7 @@
 import torch
 from collections import OrderedDict
 from torch.nn import functional as F
+from contextlib import nullcontext
 
 from burstISP.utils.registry import MODEL_REGISTRY
 from burstISP.models.sr_model import SRModel
@@ -24,55 +25,61 @@ class MambaFusionModel(SRModel):
 
         if (current_iter - 1) % accumulation_steps == 0:
             self.optimizer_g.zero_grad()
+
+        is_sync_step = (current_iter % accumulation_steps == 0)
+        
+        # Use DDP's no_sync() if we are accumulating, otherwise do nothing
+        sync_context = self.net_g.no_sync if (not is_sync_step and self.opt['dist']) else nullcontext
         
         # Forward Pass
-        with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-            #self.output, aligned_burst, fusion_output = self.net_g(self.lq)
-            self.output = self.net_g(self.lq)
+        with sync_context():
+            with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+                #self.output, aligned_burst, fusion_output = self.net_g(self.lq)
+                self.output = self.net_g(self.lq)
 
-        self.output = self.output.float()
-        l_total = 0
-        loss_dict = OrderedDict()
+            self.output = self.output.float()
+            l_total = 0
+            loss_dict = OrderedDict()
 
-        # Applies part of ISP from visualize_results.py
-        # Differentiates edges from noise
-        epsilon = 1e-6
-        out_float = self.output.float()
-        gt_float = self.gt.float()
-        FIXED_EXPOSURE = 4.0 
+            # Applies part of ISP from visualize_results.py
+            # Differentiates edges from noise
+            epsilon = 1e-1
+            out_float = self.output.float()
+            gt_float = self.gt.float()
+            FIXED_EXPOSURE = 4.0 
 
-        out_scaled = out_float * FIXED_EXPOSURE
-        gt_scaled = gt_float * FIXED_EXPOSURE
+            out_scaled = out_float * FIXED_EXPOSURE
+            gt_scaled = gt_float * FIXED_EXPOSURE
 
-        # Gamma Compression 
-        out_gamma = torch.sign(out_scaled) * (torch.abs(out_scaled) + epsilon) ** (1.0 / 2.2)
-        gt_gamma = torch.abs(gt_scaled + epsilon) ** (1.0 / 2.2)
+            # Gamma Compression 
+            out_gamma = torch.sign(out_scaled) * (torch.abs(out_scaled) + epsilon) ** (1.0 / 2.2)
+            gt_gamma = torch.abs(gt_scaled + epsilon) ** (1.0 / 2.2)
 
-        # pixel loss
-        if self.cri_pix:
-            l_pix = self.cri_pix(out_gamma, gt_gamma)
-            l_total += l_pix
-            loss_dict['l_pix'] = l_pix
+            # pixel loss
+            if self.cri_pix:
+                l_pix = self.cri_pix(out_gamma, gt_gamma)
+                l_total += l_pix
+                loss_dict['l_pix'] = l_pix
 
-        # Edge Loss
-        if self.cri_edge:
-            l_edge = self.cri_edge(out_gamma, gt_gamma)
-            l_total += l_edge
-            loss_dict['l_edge'] = l_edge
+            # Edge Loss
+            if self.cri_edge:
+                l_edge = self.cri_edge(out_gamma, gt_gamma)
+                l_total += l_edge
+                loss_dict['l_edge'] = l_edge
 
-        # Backpropagation
-        l_total = l_total / accumulation_steps
-        l_total.backward()
+            # Backpropagation
+            l_total = l_total / accumulation_steps
+            l_total.backward()
 
-        if current_iter % accumulation_steps == 0:
-            clip_norm = self.opt['datasets']['train'].get('grad_clip_norm',1.0)
-            torch.nn.utils.clip_grad_norm_(self.net_g.parameters(), clip_norm)
-            self.optimizer_g.step()
+            if is_sync_step:
+                clip_norm = self.opt['datasets']['train'].get('grad_clip_norm',1.0)
+                torch.nn.utils.clip_grad_norm_(self.net_g.parameters(), clip_norm)
+                self.optimizer_g.step()
 
-            if self.ema_decay > 0:
-                self.model_ema(decay=self.ema_decay)
+                if self.ema_decay > 0:
+                    self.model_ema(decay=self.ema_decay)
 
-        self.log_dict = self.reduce_loss_dict(loss_dict)
+                self.log_dict = self.reduce_loss_dict(loss_dict)
 
     def test(self):
         if hasattr(self, 'net_g_ema'):
