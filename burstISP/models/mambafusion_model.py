@@ -20,7 +20,10 @@ class MambaFusionModel(SRModel):
 
     # Modified from sr_model.py to include bf16 and alignment loss
     def optimize_parameters(self, current_iter):
-        self.optimizer_g.zero_grad()
+        accumulation_steps = self.opt['train'].get('accumulation_steps', 1)
+
+        if (current_iter - 1) % accumulation_steps == 0:
+            self.optimizer_g.zero_grad()
         
         # Forward Pass
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
@@ -58,16 +61,18 @@ class MambaFusionModel(SRModel):
             loss_dict['l_edge'] = l_edge
 
         # Backpropagation
+        l_total = l_total / accumulation_steps
         l_total.backward()
 
-        clip_norm = self.opt['datasets']['train'].get('grad_clip_norm',1.0)
-        torch.nn.utils.clip_grad_norm_(self.net_g.parameters(), clip_norm)
-        self.optimizer_g.step()
+        if current_iter % accumulation_steps == 0:
+            clip_norm = self.opt['datasets']['train'].get('grad_clip_norm',1.0)
+            torch.nn.utils.clip_grad_norm_(self.net_g.parameters(), clip_norm)
+            self.optimizer_g.step()
+
+            if self.ema_decay > 0:
+                self.model_ema(decay=self.ema_decay)
 
         self.log_dict = self.reduce_loss_dict(loss_dict)
-
-        if self.ema_decay > 0:
-            self.model_ema(decay=self.ema_decay)
 
     def test(self):
         if hasattr(self, 'net_g_ema'):
