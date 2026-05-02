@@ -42,7 +42,7 @@ class MambaFusionNet(nn.Module):
         self.fusion_heads = opt['fusion_heads']
 
         # Long skip connection
-        self.global_skip = GlobalSkipConnection(scale=self.opt['scale'])
+        #self.global_skip = GlobalSkipConnection(scale=self.opt['scale'])
         # self.alpha_residual = nn.Parameter(torch.zeros(1)) - removed in favor of zero-init last conv in irv2
 
         # Alignment module
@@ -74,7 +74,7 @@ class MambaFusionNet(nn.Module):
         center_idx = self.num_frames // 2
         center_raw = x[:, center_idx, :, :, :].float()
 
-        base_img = self.global_skip(center_raw)
+        #base_img = self.global_skip(center_raw)
 
         # Align features from burst frames
         with torch.amp.autocast("cuda", enabled=False):
@@ -89,7 +89,8 @@ class MambaFusionNet(nn.Module):
         deep_residual = self.restoration(fused_input)  # Shape: [B, C_out, H_out, W_out]
 
         # Add long skip connection
-        output = base_img + deep_residual
+        #output = base_img + deep_residual
+        output = deep_residual
 
         return output
     
