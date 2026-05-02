@@ -1,5 +1,9 @@
+# GENERATE TIME: Fri May  1 16:05:40 2026
+# CMD:
+# train.py -opt configfinal.yml --launcher pytorch
+
 # config.yml
-name: GlobalSkip_CharbOnly
+name: MambaFusion_GradientAccum
 model_type: MambaFusionModel
 scale: 8
 num_gpu: 4
@@ -31,7 +35,6 @@ datasets:
 # Network
 network_g:
   type: MambaFusionNet
-  global_skip: false
   num_frames: 5
   img_size: 80
   num_feat: 64
@@ -81,7 +84,7 @@ train:
     reduction: mean
   edge_opt:
     type: GWLoss
-    loss_weight: 0.0
+    loss_weight: 0.5
 
 # Validation
 val:

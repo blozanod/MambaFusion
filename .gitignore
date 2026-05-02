@@ -79,3 +79,4 @@ dataset/*/
 use.txt
 *.log
 papers/
+*.o*
