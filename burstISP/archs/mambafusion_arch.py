@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+import kornia
 import cv2
 from burstISP.utils.registry import ARCH_REGISTRY
 from burstISP.archs.mambairv2_arch import MambaIRv2
@@ -40,10 +41,12 @@ class MambaFusionNet(nn.Module):
         self.offset_groups = opt['offset_groups']
         self.is_train = opt['is_train']
         self.fusion_heads = opt['fusion_heads']
+        self.is_global_skip = opt['global_skip']
 
         # Long skip connection
-        #self.global_skip = GlobalSkipConnection(scale=self.opt['scale'])
-        # self.alpha_residual = nn.Parameter(torch.zeros(1)) - removed in favor of zero-init last conv in irv2
+        if self.is_global_skip:
+            self.global_skip = GlobalSkipConnection(scale=self.opt['scale'])
+        #self.alpha_residual = nn.Parameter(torch.zeros(1)) - removed in favor of zero-init last conv in irv2
 
         # Alignment module
         self.alignment = BurstAlign(num_feat=self.num_feat, num_frames=self.num_frames, offset_groups=self.offset_groups)
@@ -68,13 +71,15 @@ class MambaFusionNet(nn.Module):
             mlp_ratio=self.opt['mlp_ratio'],
             upsampler=self.opt['upsampler'],
             resi_connection=self.opt['resi_connection'],
-            use_checkpoint=False)
+            use_checkpoint=False,
+            control_net=self.is_global_skip
+        )
 
     def forward(self, x):
         center_idx = self.num_frames // 2
         center_raw = x[:, center_idx, :, :, :].float()
 
-        #base_img = self.global_skip(center_raw)
+        base_img = self.global_skip(center_raw)
 
         # Align features from burst frames
         with torch.amp.autocast("cuda", enabled=False):
@@ -89,8 +94,10 @@ class MambaFusionNet(nn.Module):
         deep_residual = self.restoration(fused_input)  # Shape: [B, C_out, H_out, W_out]
 
         # Add long skip connection
-        #output = base_img + deep_residual
-        output = deep_residual
+        if self.is_global_skip:
+            output = base_img + deep_residual
+        else:
+            output = deep_residual
 
         return output
     
@@ -109,36 +116,14 @@ class GlobalSkipConnection(nn.Module):
     def forward(self, x):
         B, C, H, W = x.shape
         device = x.device
-        
-        # Detach to CPU for OpenCV operations
-        x_cpu = x.detach().float().cpu().numpy()
-        
-        # Scale to 16 bit representation 
-        x_uint16 = np.clip(x_cpu * 65535.0, 0, 65535).astype(np.uint16)
-        
-        out_batch =[]
-        for i in range(B):
-            # Unpack the 4-channel image into a 1-channel 2H x 2W Bayer array 
-            bayer = np.zeros((H * 2, W * 2), dtype=np.uint16)
-            bayer[0::2, 0::2] = x_uint16[i, 0, :, :] # R
-            bayer[0::2, 1::2] = x_uint16[i, 1, :, :] # G1
-            bayer[1::2, 0::2] = x_uint16[i, 2, :, :] # G2
-            bayer[1::2, 1::2] = x_uint16[i, 3, :, :] # B
-            
-            # Malvar-He-Cutler Demosaicing
-            rgb_uint16 = cv2.cvtColor(bayer, cv2.COLOR_BayerBG2RGB_EA)
-            out_batch.append(rgb_uint16)
-            
-        # Normalize to fp32
-        out_np = np.stack(out_batch, axis=0) # [B, 2H, 2W, 3]
-        out_np = out_np.astype(np.float32) / 65535.0
-        
-        # Cast back to tensor and return to original device
-        out_tensor = torch.from_numpy(out_np).permute(0, 3, 1, 2).to(device)
-        
-        # Upsample with Bicubic Interpolation
-        out = F.interpolate(out_tensor, scale_factor=self.rem_scale, mode='bicubic', align_corners=False)
-        
-        # Return matched dtype (e.g. bfloat16 mixed precision protection)
-        return out.to(x.dtype)
 
+        # Unpack RGGB Image
+        bayer = F.pixel_shuffle(x, 2) # [B, 1, 2H, 2W]
+
+        # Demosaicing step
+        rgb = kornia.color.raw_to_rgb(bayer, kornia.color.CFA.BG)
+
+        # Upsampling
+        out = F.interpolate(rgb, scale_factor=self.rem_scale, mode='bicubic', align_corners=False)
+
+        return out.to(x.dtype)

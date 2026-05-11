@@ -807,6 +807,7 @@ class MambaIRv2(nn.Module):
                  img_range=1.,
                  upsampler='',
                  resi_connection='1conv',
+                 control_net=False,
                  **kwargs):
         super().__init__()
         num_in_ch = in_chans
@@ -924,7 +925,7 @@ class MambaIRv2(nn.Module):
         self.apply(self._init_weights)
 
         # Zero Initialize the final Layer of MambaIRv2
-        if self.upsampler in ['pixelshuffle', 'nearest+conv', '']:
+        if self.upsampler in ['pixelshuffle', 'nearest+conv', ''] and control_net:
             nn.init.zeros_(self.conv_last.weight)
             if self.conv_last.bias is not None:
                 nn.init.zeros_(self.conv_last.bias)
