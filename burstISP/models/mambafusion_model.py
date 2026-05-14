@@ -6,6 +6,7 @@ from contextlib import nullcontext
 from burstISP.utils.registry import MODEL_REGISTRY
 from burstISP.models.sr_model import SRModel
 from burstISP.utils import get_root_logger
+from burstISP.utils.img_util import generate_processed_image_channel3
 
 
 @MODEL_REGISTRY.register()
@@ -41,29 +42,38 @@ class MambaFusionModel(SRModel):
             l_total = 0
             loss_dict = OrderedDict()
 
-            # Applies part of ISP from visualize_results.py
-            # Differentiates edges from noise
-            epsilon = 1e-1
+            # Apples ISP from generate_processd_image_channel3
             out_float = self.output.float()
             gt_float = self.gt.float()
-            FIXED_EXPOSURE = 4.0 
 
-            out_scaled = out_float * FIXED_EXPOSURE
-            gt_scaled = gt_float * FIXED_EXPOSURE
+            # Auto-Exposure
+            gt_mean = gt_float.mean(dim=(1, 2, 3), keepdim=True)
+            exposure_factor = 0.2 / (gt_mean + 1e-6)
 
-            # Gamma Compression 
-            out_gamma = torch.sign(out_scaled) * (torch.abs(out_scaled) + epsilon) ** (1.0 / 2.2)
-            gt_gamma = torch.abs(gt_scaled + epsilon) ** (1.0 / 2.2)
+            out_scaled = out_float * exposure_factor
+            gt_scaled = gt_float * exposure_factor
+
+            # Clamp
+            out_mapped = out_scaled.clamp(1e-6, 1.0)
+            gt_mapped = gt_scaled.clamp(1e-6, 1.0)
+
+            # sRGB Gamma Curve
+            out_gamma = out_mapped ** (1.0 / 2.2)
+            gt_gamma = gt_mapped ** (1.0 / 2.2)
+
+            # S-Curve Contrast (Smoothstep)
+            out_final = 3 * (out_gamma ** 2) - 2 * (out_gamma ** 3)
+            gt_final = 3 * (gt_gamma ** 2) - 2 * (gt_gamma ** 3)
 
             # pixel loss
             if self.cri_pix:
-                l_pix = self.cri_pix(out_gamma, gt_gamma)
+                l_pix = self.cri_pix(out_final, gt_final)
                 l_total += l_pix
                 loss_dict['l_pix'] = l_pix
 
             # Edge Loss
             if self.cri_edge:
-                l_edge = self.cri_edge(out_gamma, gt_gamma)
+                l_edge = self.cri_edge(out_final, gt_final)
                 l_total += l_edge
                 loss_dict['l_edge'] = l_edge
 

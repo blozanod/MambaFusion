@@ -3,6 +3,7 @@ import numpy as np
 
 from burstISP.metrics.metric_util import reorder_image, to_y_channel
 from burstISP.utils.registry import METRIC_REGISTRY
+from burstISP.utils.img_util import generate_processed_image_channel3
 
 
 @METRIC_REGISTRY.register()
@@ -128,18 +129,29 @@ def calculate_ssim(img, img2, crop_border, input_order='HWC', test_y_channel=Fal
     return np.array(ssims).mean()
 
 @METRIC_REGISTRY.register()
-def calculate_psnr_srgb(img, img2, crop_border, input_order='HWC', **kwargs):
+def calculate_psnr_srgb(img, img2, meta_data, crop_border, input_order='HWC', **kwargs):
     # img and img2 arrive in [0, 255]. Convert to [0.0, 1.0] float
     img = img.astype(np.float64) / 255.0
     img2 = img2.astype(np.float64) / 255.0
     
-    # Apply Exposure and clamp
-    img = np.clip(img * 4.0, 0.0, 1.0)
-    img2 = np.clip(img2 * 4.0, 0.0, 1.0)
+    # Auto-Exposure anchored to Ground Truth
+    gt_mean = img2.mean()
+    exposure_factor = 0.2 / (gt_mean + 1e-6)
+    
+    img = np.clip(img * exposure_factor, 1e-6, 1.0)
+    img2 = np.clip(img2 * exposure_factor, 1e-6, 1.0)
     
     # Apply Gamma
-    img = np.power(img, 1.0 / 2.2) * 255.0
-    img2 = np.power(img2, 1.0 / 2.2) * 255.0
+    img = np.power(img, 1.0 / 2.2)
+    img2 = np.power(img2, 1.0 / 2.2)
+    
+    # Apply Smoothstep S-Curve
+    img = 3 * (img ** 2) - 2 * (img ** 3)
+    img2 = 3 * (img2 ** 2) - 2 * (img2 ** 3)
+    
+    # Scale back to 255 for standard PSNR calculation
+    img = img * 255.0
+    img2 = img2 * 255.0
     
     return calculate_psnr(img, img2, crop_border, input_order, **kwargs)
 

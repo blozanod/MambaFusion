@@ -180,14 +180,12 @@ def generate_processed_image_channel3(im, meta_data, return_np=False, black_leve
     im = im * meta_data.get('norm_factor', 16383.0)
     device = im.device
 
-    # FIX: Use local variables! Never mutate dictionary references passed into a function.
     if not meta_data.get('black_level_subtracted', False) and not black_level_substracted:
         bl_arr = meta_data['black_level']
         # Convert [R, G1, G2, B] to[R, (G1+G2)/2, B] safely
         bl_tensor = torch.tensor([bl_arr[0], (bl_arr[1] + bl_arr[2]) / 2.0, bl_arr[3]], dtype=torch.float32, device=device)
         im = im - bl_tensor.view(3, 1, 1)
 
-    # FIX: Corrected typo 'while_balance' to 'white_balance'
     if not meta_data.get('white_balance_applied', False) and not no_white_balance:
         wb_arr = meta_data['cam_wb']
         # Convert[R, G1, G2, B] to [R, (G1+G2)/2, B] safely
