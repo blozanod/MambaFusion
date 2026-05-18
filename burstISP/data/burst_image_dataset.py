@@ -61,8 +61,9 @@ class BurstImageDataset(data.Dataset):
         pkl_file = glob.glob(os.path.join(burst_dir, '*.pkl'))[0]
         gt_img_file = glob.glob(os.path.join(burst_dir, '*_x4_rgb.png'))[0]
 
-        img = cv2.imread(gt_img_file, cv2.IMREAD_UNCHANGED)
-        # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        # Stored as RGB image
+        # Use IMREAD_UNCHANGED due to 48 bit depth, others destroy img
+        img = cv2.imread(gt_img_file, cv2.IMREAD_UNCHANGED) 
         
         image = torch.from_numpy(img.astype(np.float32)).permute(2,0,1) #[3, H, W]
 

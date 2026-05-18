@@ -219,3 +219,40 @@ def generate_processed_image_channel3(im, meta_data, return_np=False, black_leve
         im_out = im_out.astype(np.uint8)
 
     return im_out
+
+def differentiable_benchmark_isp(x):
+        """
+        Exactly mimics the validation ISP (generate_processed_image_channel3)
+        but is completely safe for PyTorch Autograd (no NaNs, no dead-zones).
+
+        Achieved by using a leaky clamp, which prevents 0 gradients and guides
+        outputs back to [0.0, 1.0] range.
+
+        Then a safe gamma function, which avoids using .abs and .sign which contain
+        0 gradients. And adds epsilon to prevent NaN and mimic curve in validaiton.
+
+        And a symmetric smoothstep function that works for both positive and negative
+        outputs, so that negatives are pushed back to <= 0.0.
+        """
+        
+        # Leaky clamp, which prevents 0 gradients for vals > 1.0
+        x_safe = torch.where(x > 1.0, 1.0 + 0.01 * (x - 1.0),
+                torch.where(x < 0.0, 0.01 * x, x))
+        
+        # Safe gamma, which routes both positive and negative vals
+        gamma_val = 1.0 / 2.2
+        eps = 1e-6
+        x_gamma = torch.where(
+            x_safe >= 0,
+            (x_safe + eps) ** gamma_val,
+            -((-x_safe + eps) ** gamma_val)
+        )
+        
+        # Symmetric smoothstep
+        y = torch.where(
+            x_gamma >= 0,
+            3 * (x_gamma ** 2) - 2 * (x_gamma ** 3),
+            -(3 * ((-x_gamma) ** 2) - 2 * ((-x_gamma) ** 3))
+        )
+        
+        return y

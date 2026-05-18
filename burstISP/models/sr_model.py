@@ -226,11 +226,13 @@ class SRModel(BaseModel):
             self.feed_data(val_data)
             self.test()
 
+            # Changed so that gt and results don't go through tensor2img
+            # due to bit depth, as t2i quantizes to 8 bits
             visuals = self.get_current_visuals()
-            sr_img = tensor2img([visuals['result']])
+            sr_img = visuals['result']
             metric_data['img'] = sr_img
             if 'gt' in visuals:
-                gt_img = tensor2img([visuals['gt']])
+                gt_img = visuals['gt']
                 metric_data['img2'] = gt_img
                 del self.gt
 
