@@ -221,7 +221,7 @@ def generate_processed_image_channel3(im, meta_data, return_np=False, black_leve
     return im_out
 
 def differentiable_benchmark_isp(x):
-        """
+    """
         Exactly mimics the validation ISP (generate_processed_image_channel3)
         but is completely safe for PyTorch Autograd (no NaNs, no dead-zones).
 
@@ -234,25 +234,26 @@ def differentiable_benchmark_isp(x):
         And a symmetric smoothstep function that works for both positive and negative
         outputs, so that negatives are pushed back to <= 0.0.
         """
-        
-        # Leaky clamp, which prevents 0 gradients for vals > 1.0
-        x_safe = torch.where(x > 1.0, 1.0 + 0.01 * (x - 1.0),
-                torch.where(x < 0.0, 0.01 * x, x))
-        
-        # Safe gamma, which routes both positive and negative vals
-        gamma_val = 1.0 / 2.2
-        eps = 1e-6
-        x_gamma = torch.where(
-            x_safe >= 0,
-            (x_safe + eps) ** gamma_val,
-            -((-x_safe + eps) ** gamma_val)
-        )
-        
-        # Symmetric smoothstep
-        y = torch.where(
-            x_gamma >= 0,
-            3 * (x_gamma ** 2) - 2 * (x_gamma ** 3),
-            -(3 * ((-x_gamma) ** 2) - 2 * ((-x_gamma) ** 3))
-        )
-        
-        return y
+    
+    # Leaky clamp
+    x_safe = torch.where(x > 1.0, 1.0 + 0.01 * (x - 1.0),
+             torch.where(x < 0.0, 0.01 * x, x))
+    
+    # Gamma
+    gamma_val = 1.0 / 2.2
+    eps = 1e-6
+    base_pos = torch.where(x_safe >= 0, x_safe, torch.ones_like(x_safe))
+    base_neg = torch.where(x_safe < 0, -x_safe, torch.ones_like(x_safe))
+    
+    # Use torch.where to avoid using abs or sign
+    x_gamma = torch.where(
+        x_safe >= 0,
+        (base_pos + eps) ** gamma_val,
+        -((base_neg + eps) ** gamma_val)
+    )
+    
+    # Symmetric smoothstep
+    y_abs = torch.abs(x_gamma)
+    y = torch.sign(x_gamma) * (3 * (y_abs ** 2) - 2 * (y_abs ** 3))
+    
+    return y
