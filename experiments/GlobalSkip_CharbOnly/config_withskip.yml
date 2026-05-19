@@ -1,9 +1,9 @@
-# GENERATE TIME: Mon May 18 20:35:40 2026
+# GENERATE TIME: Tue May 19 01:24:01 2026
 # CMD:
-# train.py -opt config_noskip.yml --launcher pytorch
+# train.py -opt config_withskip.yml --launcher pytorch
 
 # config.yml
-name: NoSkip_CharbOnly
+name: GlobalSkip_CharbOnly
 model_type: MambaFusionModel
 scale: 8
 num_gpu: 4
@@ -35,7 +35,7 @@ datasets:
 # Network
 network_g:
   type: MambaFusionNet
-  global_skip: false
+  global_skip: true
   num_frames: 5
   img_size: 80
   num_feat: 64
