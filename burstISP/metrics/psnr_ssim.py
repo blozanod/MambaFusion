@@ -164,5 +164,9 @@ def calculate_psnr_srgb(img, img2, crop_border, input_order='HWC', **kwargs):
 
 @METRIC_REGISTRY.register()
 def calculate_psnr_linear(img, img2, crop_border, input_order='HWC', **kwargs):
+    if torch.is_tensor(img):
+        img = img.detach().cpu().numpy()
+        img2 = img2.detach().cpu().numpy()
+
     # Standard PSNR on the raw linear output
     return calculate_psnr(img, img2, crop_border, input_order, **kwargs)
