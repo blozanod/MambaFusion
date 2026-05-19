@@ -37,20 +37,28 @@ class BurstImageDataset(data.Dataset):
             lq_frames.append(lq_img)
         
         # Random Flips
-        """
         if self.opt['phase'] == 'train':
             hflip = random.random() < 0.5
             vflip = random.random() < 0.5
+            transpose = random.random() < 0.5
+            
             if hflip:
-                # Correct PyTorch Spatial Horizontal Flip (dim=2 is Width)
+                # Dim 2 is Width
                 gt_img = torch.flip(gt_img, dims=[2])
-                lq_frames = [torch.flip(lq, dims=[2]) for lq in lq_frames]
+                # Flip spatially AND swap channels: R <-> G1, G2 <-> B
+                lq_frames = [torch.flip(lq, dims=[2])[[1, 0, 3, 2], :, :] for lq in lq_frames]
             
             if vflip:
-                # Correct PyTorch Spatial Vertical Flip (dim=1 is Height)
+                # Dim 1 is Height
                 gt_img = torch.flip(gt_img, dims=[1])
-                lq_frames = [torch.flip(lq, dims=[1]) for lq in lq_frames]
-        """
+                # Flip spatially AND swap channels: R <-> G2, G1 <-> B
+                lq_frames = [torch.flip(lq, dims=[1])[[2, 3, 0, 1], :, :] for lq in lq_frames]
+                
+            if transpose:
+                # Transpose H and W
+                gt_img = torch.transpose(gt_img, 1, 2)
+                # Transpose spatially AND swap channels: G1 <-> G2
+                lq_frames = [torch.transpose(lq, 1, 2)[[0, 2, 1, 3], :, :] for lq in lq_frames]
 
         # Transform to tensors (dim=0 is standard over axis=0)
         img_lqs = torch.stack(lq_frames, dim=0) # [N, C, H, W]

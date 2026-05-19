@@ -130,7 +130,7 @@ def calculate_ssim(img, img2, crop_border, input_order='HWC', test_y_channel=Fal
     return np.array(ssims).mean()
 
 @METRIC_REGISTRY.register()
-def calculate_psnr_srgb(img, img2, meta_data, crop_border, input_order='HWC', **kwargs):
+def calculate_psnr_srgb(img, img2, crop_border, input_order='HWC', **kwargs):
     # img and img2 arrive as [0, 1] tensors
     if torch.is_tensor(img):
         img = img.detach().cpu().numpy()
