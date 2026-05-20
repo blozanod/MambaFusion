@@ -1,4 +1,5 @@
 import torch
+import cv2
 from collections import OrderedDict
 from os import path as osp
 from tqdm import tqdm
@@ -8,6 +9,7 @@ from burstISP.archs import build_network
 from burstISP.loss import build_loss
 from burstISP.metrics import calculate_metric
 from burstISP.utils import get_root_logger, imwrite, tensor2img
+from burstISP.utils.img_util import generate_processed_image_channel3
 from burstISP.utils.registry import MODEL_REGISTRY
 from .base_model import BaseModel
 
@@ -226,21 +228,20 @@ class SRModel(BaseModel):
             self.feed_data(val_data)
             self.test()
 
-            # Changed so that gt and results don't go through tensor2img
-            # due to bit depth, as t2i quantizes to 8 bits
+            # Adds meta_data to metric_data for validation
+            pkl_path = val_data['meta'][0]
+            with open(pkl_path, 'rb') as f:
+                meta_data = pkl.load(f)
+            metric_data['meta_data'] = meta_data
+
+            # Set img metric_data
             visuals = self.get_current_visuals()
-            sr_img = visuals['result'].squeeze(0).numpy()
-            
-            # Convert CHW to HWC to prevent reorder_image issues downstream
-            if sr_img.ndim == 3:
-                sr_img = sr_img.transpose(1, 2, 0)
-            metric_data['img'] = sr_img
+            sr_tensor = visuals['result'].squeeze(0)
+            metric_data['img'] = sr_tensor
             
             if 'gt' in visuals:
-                gt_img = visuals['gt'].squeeze(0).numpy()
-                if gt_img.ndim == 3:
-                    gt_img = gt_img.transpose(1, 2, 0)
-                metric_data['img2'] = gt_img
+                gt_tensor = visuals['gt'].squeeze(0)
+                metric_data['img2'] = gt_tensor
                 del self.gt
 
             # tentative for out of GPU memory
@@ -249,6 +250,11 @@ class SRModel(BaseModel):
             torch.cuda.empty_cache()
 
             if save_img:
+                # Apply ISP
+                sr_img_srgb = generate_processed_image_channel3(
+                    sr_tensor.cpu(), meta_data, return_np=True, black_level_substracted=True)
+                sr_img_srgb = cv2.cvtColor(sr_img_srgb, cv2.COLOR_RGB2BGR)
+
                 if self.opt['is_train']:
                     save_img_path = osp.join(self.opt['path']['visualization'], img_name,
                                              f'{img_name}_{current_iter}.png')
@@ -259,7 +265,7 @@ class SRModel(BaseModel):
                     else:
                         save_img_path = osp.join(self.opt['path']['visualization'], dataset_name,
                                                  f'{img_name}_{self.opt["name"]}.png')
-                imwrite(sr_img, save_img_path)
+                imwrite(sr_img_srgb, save_img_path)
 
             if with_metrics:
                 # calculate metrics

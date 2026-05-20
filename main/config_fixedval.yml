@@ -1,5 +1,5 @@
 # config.yml
-name: NoSkip_CharbOnly
+name: FixedVal
 model_type: MambaFusionModel
 scale: 8
 num_gpu: 4
@@ -90,17 +90,17 @@ val:
   metrics:
     psnr_srgb:
       type: calculate_psnr_srgb
-      crop_border: 4
+      crop_border: 40
       test_y_channel: false
       better: higher
     psnr_linear:
       type: calculate_psnr_linear
-      crop_border: 4
+      crop_border: 40
       test_y_channel: false
       better: higher
     ssim:
-      type: calculate_ssim
-      crop_border: 4
+      type: calculate_ssim_srgb
+      crop_border: 40
       test_y_channel: false
       better: higher
 

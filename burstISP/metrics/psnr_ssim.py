@@ -138,51 +138,46 @@ def calculate_ssim(img, img2, crop_border, input_order='HWC', test_y_channel=Fal
     return np.array(ssims).mean()
 
 @METRIC_REGISTRY.register()
-def calculate_psnr_srgb(img, img2, crop_border, input_order='HWC', **kwargs):
-    # img and img2 arrive as [0, 1] tensors
-    if torch.is_tensor(img):
-        img = img.detach().cpu().numpy()
-        img2 = img2.detach().cpu().numpy()
-    # drop batch if exists
-    if img.ndim == 4 and img.shape[0] == 1:
-        img = img.squeeze(0)
-        img2 = img2.squeeze(0)
+def calculate_psnr_srgb(img, img2, meta_data, crop_border, input_order='HWC', **kwargs):
+    # Ensure Images are Tensors
+    if not torch.is_tensor(img):
+        img = torch.from_numpy(img)
+    if not torch.is_tensor(img2):
+        img2 = torch.from_numpy(img2)
 
-    # Reorder if necessary
-    if img.ndim == 3 and img.shape[0] in [1, 3, 4]:
-        img = img.transpose(1, 2, 0)
-        img2 = img2.transpose(1, 2, 0)
+    # Apply ISP pipeline for srgb comparison
+    img_np = generate_processed_image_channel3(img, meta_data, return_np=True, black_level_substracted=True)
+    img2_np = generate_processed_image_channel3(img2, meta_data, return_np=True, black_level_substracted=True)
+    
+    return calculate_psnr(img_np, img2_np, crop_border, input_order, **kwargs)
 
-    # Auto-Exposure anchored to Ground Truth
-    gt_mean = img2.mean()
-    exposure_factor = 0.2 / (gt_mean + 1e-6)
+@METRIC_REGISTRY.register()
+def calculate_ssim_srgb(img, img2, meta_data, crop_border, input_order='HWC', **kwargs):
+    # Ensure Images are Tensors
+    if not torch.is_tensor(img):
+        img = torch.from_numpy(img)
+    if not torch.is_tensor(img2):
+        img2 = torch.from_numpy(img2)
+
+    # Apply ISP pipeline for srgb comparison
+    img_np = generate_processed_image_channel3(img, meta_data, return_np=True, black_level_substracted=True)
+    img2_np = generate_processed_image_channel3(img2, meta_data, return_np=True, black_level_substracted=True)
     
-    img = np.clip(img * exposure_factor, 1e-6, 1.0)
-    img2 = np.clip(img2 * exposure_factor, 1e-6, 1.0)
-    
-    # Apply Gamma
-    img = np.power(img, 1.0 / 2.2)
-    img2 = np.power(img2, 1.0 / 2.2)
-    
-    # Apply Smoothstep S-Curve
-    img = 3 * (img ** 2) - 2 * (img ** 3)
-    img2 = 3 * (img2 ** 2) - 2 * (img2 ** 3)
-    
-    # Convert to 8-bit for PSNR
-    img = np.round(img * 255.0)
-    img2 = np.round(img2 * 255.0)
-    
-    return calculate_psnr(img, img2, crop_border, input_order, **kwargs)
+    return calculate_ssim(img_np, img2_np, crop_border, input_order, **kwargs)
 
 @METRIC_REGISTRY.register()
 def calculate_psnr_linear(img, img2, crop_border, input_order='HWC', **kwargs):
     if torch.is_tensor(img):
         img = img.detach().cpu().numpy()
-        img2 = img2.detach().cpu().numpy()
-    # drop batch if exists
-    if img.ndim == 4 and img.shape[0] == 1:
-        img = img.squeeze(0)
-        img2 = img2.squeeze(0)
+        img2 = img2.detach().cpu().numpy() 
+    
+    if img.shape[0] == 3:
+        img = img.transpose(1, 2, 0)
+        img2 = img2.transpose(1, 2, 0)
+
+    # Scale from [0, 1] to [0, 255]
+    img = np.clip(img, 0.0, 1.0) * 255.0
+    img2 = np.clip(img2, 0.0, 1.0) * 255.0
 
     # Standard PSNR on the raw linear output
     return calculate_psnr(img, img2, crop_border, input_order, **kwargs)

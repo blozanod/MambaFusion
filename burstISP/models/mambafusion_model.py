@@ -43,7 +43,7 @@ class MambaFusionModel(SRModel):
             l_total = 0
             loss_dict = OrderedDict()
 
-            # Apples ISP to prioritize perception
+            """ ISP Pipeline For Training
             out_float = self.output.float()
             gt_float = self.gt.float()
 
@@ -67,16 +67,17 @@ class MambaFusionModel(SRModel):
                 
                 # Smoothstep
                 gt_mapped = 3 * (gt_gamma ** 2) - 2 * (gt_gamma ** 3)
+            """
 
             # pixel loss
             if self.cri_pix:
-                l_pix = self.cri_pix(out_mapped, gt_mapped)
+                l_pix = self.cri_pix(self.output, self.gt)
                 l_total += l_pix
                 loss_dict['l_pix'] = l_pix
 
             # Edge Loss
             if self.cri_edge:
-                l_edge = self.cri_edge(out_mapped, gt_mapped)
+                l_edge = self.cri_edge(self.output, self.gt)
                 l_total += l_edge
                 loss_dict['l_edge'] = l_edge
 
