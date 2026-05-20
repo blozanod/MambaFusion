@@ -120,6 +120,10 @@ def calculate_ssim(img, img2, crop_border, input_order='HWC', test_y_channel=Fal
     img = img.astype(np.float64)
     img2 = img2.astype(np.float64)
 
+    if img.max() <= 1.01 and img2.max() <= 1.01:
+        img = img * 255.0
+        img2 = img2 * 255.0
+
     if crop_border != 0:
         img = img[crop_border:-crop_border, crop_border:-crop_border, ...]
         img2 = img2[crop_border:-crop_border, crop_border:-crop_border, ...]
@@ -139,6 +143,10 @@ def calculate_psnr_srgb(img, img2, crop_border, input_order='HWC', **kwargs):
     if torch.is_tensor(img):
         img = img.detach().cpu().numpy()
         img2 = img2.detach().cpu().numpy()
+    # drop batch if exists
+    if img.ndim == 4 and img.shape[0] == 1:
+        img = img.squeeze(0)
+        img2 = img2.squeeze(0)
 
     # Reorder if necessary
     if img.ndim == 3 and img.shape[0] in [1, 3, 4]:
@@ -171,6 +179,10 @@ def calculate_psnr_linear(img, img2, crop_border, input_order='HWC', **kwargs):
     if torch.is_tensor(img):
         img = img.detach().cpu().numpy()
         img2 = img2.detach().cpu().numpy()
+    # drop batch if exists
+    if img.ndim == 4 and img.shape[0] == 1:
+        img = img.squeeze(0)
+        img2 = img2.squeeze(0)
 
     # Standard PSNR on the raw linear output
     return calculate_psnr(img, img2, crop_border, input_order, **kwargs)

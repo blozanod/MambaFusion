@@ -229,10 +229,17 @@ class SRModel(BaseModel):
             # Changed so that gt and results don't go through tensor2img
             # due to bit depth, as t2i quantizes to 8 bits
             visuals = self.get_current_visuals()
-            sr_img = visuals['result']
+            sr_img = visuals['result'].squeeze(0).numpy()
+            
+            # Convert CHW to HWC to prevent reorder_image issues downstream
+            if sr_img.ndim == 3:
+                sr_img = sr_img.transpose(1, 2, 0)
             metric_data['img'] = sr_img
+            
             if 'gt' in visuals:
-                gt_img = visuals['gt']
+                gt_img = visuals['gt'].squeeze(0).numpy()
+                if gt_img.ndim == 3:
+                    gt_img = gt_img.transpose(1, 2, 0)
                 metric_data['img2'] = gt_img
                 del self.gt
 
