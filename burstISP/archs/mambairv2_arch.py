@@ -822,6 +822,9 @@ class MambaIRv2(nn.Module):
         self.upscale = upscale
         self.upsampler = upsampler
 
+        # residual projection
+        self.skip_proj = nn.Conv2d(in_chans, embed_dim, kernel_size=1)
+
         # ------------------------- 1, shallow feature extraction ------------------------- #
         self.conv_first = nn.Conv2d(num_in_ch, embed_dim, kernel_size=1, stride=1, padding=0)
 
@@ -994,15 +997,9 @@ class MambaIRv2(nn.Module):
 
         return attn_mask
 
-    def forward(self, x):
+    def forward(self, x, residual):
         # padding
-        h_ori, w_ori = x.size()[-2], x.size()[-1]
-        mod = self.window_size
-        h_pad = ((h_ori + mod - 1) // mod) * mod - h_ori
-        w_pad = ((w_ori + mod - 1) // mod) * mod - w_ori
-        h, w = h_ori + h_pad, w_ori + w_pad
-        x = torch.cat([x, torch.flip(x, [2])], 2)[:, :, :h, :]
-        x = torch.cat([x, torch.flip(x, [3])], 3)[:, :, :, :w]
+        h, w = x.shape[-2], x.shape[-1]
 
         self.mean = self.mean.type_as(x)
         x = (x - self.mean) * self.img_range
@@ -1013,18 +1010,18 @@ class MambaIRv2(nn.Module):
         if self.upsampler == 'pixelshuffle':
             # for classical SR
             x = self.conv_first(x)
-            x = self.conv_after_body(self.forward_features(x, params)) + x
+            x = self.conv_after_body(self.forward_features(x, params)) + self.skip_proj(residual)
             x = self.conv_before_upsample(x)
             x = self.conv_last(self.upsample(x))
         elif self.upsampler == 'pixelshuffledirect':
             # for lightweight SR
             x = self.conv_first(x)
-            x = self.conv_after_body(self.forward_features(x, params)) + x
+            x = self.conv_after_body(self.forward_features(x, params)) + self.skip_proj(residual)
             x = self.upsample(x)
         elif self.upsampler == 'nearest+conv':
             # for real-world SR
             x = self.conv_first(x)
-            x = self.conv_after_body(self.forward_features(x, params)) + x
+            x = self.conv_after_body(self.forward_features(x, params)) + self.skip_proj(residual)
             x = self.conv_before_upsample(x)
             x = self.lrelu(self.conv_up1(torch.nn.functional.interpolate(x, scale_factor=2, mode='nearest')))
             x = self.lrelu(self.conv_up2(torch.nn.functional.interpolate(x, scale_factor=2, mode='nearest')))
@@ -1036,9 +1033,6 @@ class MambaIRv2(nn.Module):
             x = x + self.conv_last(res)
 
         x = x / self.img_range + self.mean
-
-        # unpadding
-        x = x[..., :h_ori * self.upscale, :w_ori * self.upscale]
 
         return x
 
