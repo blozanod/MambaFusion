@@ -1,9 +1,9 @@
-# GENERATE TIME: Mon May 18 15:19:16 2026
+# GENERATE TIME: Sun May 24 19:09:57 2026
 # CMD:
-# train.py -opt config_noskip.yml --launcher pytorch
+# train.py -opt config_fixedval.yml --launcher pytorch
 
 # config.yml
-name: NoSkip_CharbOnly
+name: FixedVal
 model_type: MambaFusionModel
 scale: 8
 num_gpu: 4
@@ -58,9 +58,9 @@ network_g:
 
 # Training
 path:
-  pretrain_network_g: ~
+  pretrain_network_g: /groups/rls/blozanod/MambaFusion/experiments/FixedVal/models/net_g_95000.pth
   strict_load_g: true
-  resume_state: ~
+  resume_state: /groups/rls/blozanod/MambaFusion/experiments/FixedVal/training_states/95000.state
   experiments_root: ~
 
 train:
@@ -94,17 +94,17 @@ val:
   metrics:
     psnr_srgb:
       type: calculate_psnr_srgb
-      crop_border: 4
+      crop_border: 40
       test_y_channel: false
       better: higher
     psnr_linear:
       type: calculate_psnr_linear
-      crop_border: 4
+      crop_border: 40
       test_y_channel: false
       better: higher
     ssim:
-      type: calculate_ssim
-      crop_border: 4
+      type: calculate_ssim_srgb
+      crop_border: 40
       test_y_channel: false
       better: higher
 
