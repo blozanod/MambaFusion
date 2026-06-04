@@ -71,7 +71,8 @@ class BurstImageDataset(data.Dataset):
 
         # Stored as RGB image
         # Use IMREAD_UNCHANGED due to 48 bit depth, others destroy img
-        img = cv2.imread(gt_img_file, cv2.IMREAD_UNCHANGED) 
+        img = cv2.imread(gt_img_file, cv2.IMREAD_UNCHANGED)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) # BGR -> RGB 
         
         image = torch.from_numpy(img.astype(np.float32)).permute(2,0,1) #[3, H, W]
 
@@ -91,6 +92,7 @@ class BurstImageDataset(data.Dataset):
         img_path = lq_img_paths[img_idx]
 
         img = cv2.imread(img_path, cv2.IMREAD_UNCHANGED) # [H/2, W/2, 4]
+        img = img[:, :, [2, 1, 0, 3]] # [G2, G1, R, B] -> [R, G1, G2, B]
         image = torch.from_numpy(img.astype(np.float32)).permute(2,0,1) # [4, H/2, W/2]
 
         with open(pkl_file, "rb") as f:

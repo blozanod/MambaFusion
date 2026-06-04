@@ -31,14 +31,13 @@ class BurstAlign(nn.Module):
         self.padded_offset_channels = int(math.ceil((self.K * 3) / 8) * 8)  # 112
 
         # Pre-computed scale vector for offset mask tensor
-        # the offsets are the only things that are scaled. If the mask was scaled, 
-        # ie. by just multiplying by 2, the softmax temp in DCN would be ruined
+        # the offsets are the only things that are scaled.
         scale = torch.ones(1, self.padded_offset_channels, 1, 1)
         for k in range(self.K):
             base = k * 3
-            scale[0, base,     0, 0] = 2.0  # delta x  – doubles with resolution
-            scale[0, base + 1, 0, 0] = 2.0  # delta y  – doubles with resolution
-            # scale[0, base + 2, 0, 0] remains 1.0  – mask, do not scale
+            scale[0, base,     0, 0] = 2.0  # delta x
+            scale[0, base + 1, 0, 0] = 2.0  # delta y
+            # scale[0, base + 2, 0, 0] remains 1.0 – mask, do not scale
         # Padding channels (indices K*3 .. padded_offset_channels-1) stay 1.0
         self.register_buffer('offset_scale', scale)
 
@@ -200,4 +199,4 @@ class BurstAlign(nn.Module):
 
             aligned_feats.append(final_aligned)
 
-        return torch.stack(aligned_feats, dim=1)   # (B, N, num_feat, H, W)
+        return torch.stack(aligned_feats, dim=1), ref_feat_lv1   # (B, N, num_feat, H, W)

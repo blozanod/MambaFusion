@@ -97,16 +97,16 @@ class MambaFusionNet(nn.Module):
 
         # Align features from burst frames
         with torch.amp.autocast("cuda", enabled=False):
-            aligned_burst = self.alignment(x.float())  # Shape: [B, N, C, H, W]
+            aligned_burst, ref_feats = self.alignment(x.float())  # Shape: [B, N, C, H, W]
 
-        aligned_burst = aligned_burst.to(x.dtype)
-        aligned_ref = aligned_burst[:, center_idx, :, :, :]
+        # aligned_burst = aligned_burst.to(x.dtype)
+        # aligned_ref = aligned_burst[:, center_idx, :, :, :]
 
         # Collapse burst dimension into batch dimension for restoration
         fused_input = self.fusion(aligned_burst)
 
         # Restore high-quality image from fused features
-        deep_residual = self.restoration(fused_input, aligned_ref)  # Shape: [B, C_out, H_out, W_out]
+        deep_residual = self.restoration(fused_input, ref_feats)  # Shape: [B, C_out, H_out, W_out]
 
         # Add long skip connection
         if self.is_global_skip:
