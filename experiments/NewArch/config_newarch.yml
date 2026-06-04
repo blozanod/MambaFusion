@@ -1,3 +1,7 @@
+# GENERATE TIME: Fri May 29 09:15:07 2026
+# CMD:
+# train.py -opt config_newarch.yml --launcher pytorch
+
 # config.yml
 name: NewArch
 model_type: MambaFusionModel
