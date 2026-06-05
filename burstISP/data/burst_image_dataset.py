@@ -38,21 +38,7 @@ class BurstImageDataset(data.Dataset):
         
         # Random Flips
         if self.opt['phase'] == 'train':
-            hflip = random.random() < 0.5
-            vflip = random.random() < 0.5
             transpose = random.random() < 0.5
-            
-            if hflip:
-                # Dim 2 is Width
-                gt_img = torch.flip(gt_img, dims=[2])
-                # Flip spatially AND swap channels: R <-> G1, G2 <-> B
-                lq_frames = [torch.flip(lq, dims=[2])[[1, 0, 3, 2], :, :] for lq in lq_frames]
-            
-            if vflip:
-                # Dim 1 is Height
-                gt_img = torch.flip(gt_img, dims=[1])
-                # Flip spatially AND swap channels: R <-> G2, G1 <-> B
-                lq_frames = [torch.flip(lq, dims=[1])[[2, 3, 0, 1], :, :] for lq in lq_frames]
                 
             if transpose:
                 # Transpose H and W
@@ -92,7 +78,7 @@ class BurstImageDataset(data.Dataset):
         img_path = lq_img_paths[img_idx]
 
         img = cv2.imread(img_path, cv2.IMREAD_UNCHANGED) # [H/2, W/2, 4]
-        img = img[:, :, [2, 1, 0, 3]] # [G2, G1, R, B] -> [R, G1, G2, B]
+        # img = img[:, :, [2, 1, 0, 3]] # [G2, G1, R, B] -> [R, G1, G2, B]
         image = torch.from_numpy(img.astype(np.float32)).permute(2,0,1) # [4, H/2, W/2]
 
         with open(pkl_file, "rb") as f:

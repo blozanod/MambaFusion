@@ -87,7 +87,7 @@ def main():
             meta_data = pkl.load(f)
 
         # Frame selection logic
-        true_center_idx = len(lq_img_paths) // 2
+        true_center_idx = 0
         other_indices = list(range(len(lq_img_paths)))
         other_indices.remove(true_center_idx)
 
@@ -102,11 +102,10 @@ def main():
         lq_frames = []
         for idx in indices:
             lq_path = lq_img_paths[idx]
-            with open(lq_path, 'rb') as f:
-                img_lq = imfrombytes(f.read(), float32=False, flag='unchanged')
+            img = cv2.imread(lq_path, cv2.IMREAD_UNCHANGED) # [H/2, W/2, 4]
+            # img = img[:, :, [2, 1, 0, 3]] # [G2, G1, R, B] -> [R, G1, G2, B]
+            img_lq = torch.from_numpy(img.astype(np.float32)).permute(2,0,1) # [4, H/2, W/2]
                 
-            img_lq = img_lq.astype(np.float32)
-
             # Match training: subtract 512 directly
             if not meta_data.get('black_level_subtracted', False):
                 img_lq = img_lq - 512.0
@@ -116,8 +115,7 @@ def main():
             
             lq_frames.append(img_lq)
             
-        tensor_imgs = img2tensor(lq_frames, bgr2rgb=False, float32=True)
-        input_tensor = torch.stack(tensor_imgs, dim=0).unsqueeze(0).to(device)
+        input_tensor = torch.stack(lq_frames, dim=0).unsqueeze(0).to(device)
         
         # --- 6. Run Inference ---
         print(f"Running inference. Input shape: {input_tensor.shape}")
