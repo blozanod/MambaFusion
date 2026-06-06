@@ -58,7 +58,6 @@ class BurstImageDataset(data.Dataset):
         # Stored as RGB image
         # Use IMREAD_UNCHANGED due to 48 bit depth, others destroy img
         img = cv2.imread(gt_img_file, cv2.IMREAD_UNCHANGED)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) # BGR -> RGB 
         
         image = torch.from_numpy(img.astype(np.float32)).permute(2,0,1) #[3, H, W]
 

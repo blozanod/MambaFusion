@@ -220,6 +220,39 @@ def generate_processed_image_channel3(im, meta_data, return_np=False, black_leve
 
     return im_out
 
+def generate_processed_image_channel4(im, meta_data, return_np=False, black_level_substracted=True, external_norm_factor=None,
+                                      gamma=True, smoothstep=True, no_white_balance=False):
+    im = im * meta_data.get('norm_factor', 16383.0)
+
+    if not meta_data.get('black_level_subtracted', False) and not black_level_substracted:
+        im = (im - torch.tensor(meta_data['black_level']).view(4, 1, 1))
+
+    if not meta_data.get('while_balance_applied', False) and not no_white_balance:
+        im = im * torch.tensor(meta_data['cam_wb']).view(4, 1, 1) / torch.tensor(meta_data['cam_wb'])[1]
+
+    im_out = im
+
+
+    if external_norm_factor is None:
+        im_out = im_out / (im_out.mean() * 5.0)
+    else:
+        im_out = im_out / external_norm_factor
+
+    im_out = im_out.clamp(0.0, 1.0)
+
+    if gamma:
+        im_out = im_out ** (1.0 / 2.2)
+
+    if smoothstep:
+        # Smooth curve
+        im_out = 3 * im_out ** 2 - 2 * im_out ** 3
+
+    if return_np:
+        im_out = torch.stack((im_out[0, :, :], im_out[1:3, :, :].mean(dim=0), im_out[3, :, :]), dim=0)
+        im_out = im_out.permute(1, 2, 0).numpy() * 255.0
+        im_out = im_out.astype(np.uint8)
+    return im_out
+
 def differentiable_benchmark_isp(x):
     """
         Exactly mimics the validation ISP (generate_processed_image_channel3)
