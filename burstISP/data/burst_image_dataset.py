@@ -77,7 +77,6 @@ class BurstImageDataset(data.Dataset):
         img_path = lq_img_paths[img_idx]
 
         img = cv2.imread(img_path, cv2.IMREAD_UNCHANGED) # [H/2, W/2, 4]
-        # img = img[:, :, [2, 1, 0, 3]] # [G2, G1, R, B] -> [R, G1, G2, B]
         image = torch.from_numpy(img.astype(np.float32)).permute(2,0,1) # [4, H/2, W/2]
 
         with open(pkl_file, "rb") as f:
