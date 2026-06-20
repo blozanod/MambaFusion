@@ -1,5 +1,9 @@
+# GENERATE TIME: Sun Jun  7 10:56:47 2026
+# CMD:
+# train.py -opt config_newarch.yml --launcher pytorch
+
 # config.yml
-name: STHAT_GW
+name: Fixed_STHAT_35k
 model_type: MambaFusionModel
 scale: 8
 num_gpu: 4
@@ -63,9 +67,9 @@ network_g:
 
 # Training
 path:
-  pretrain_network_g: ~
+  pretrain_network_g: /groups/rls/blozanod/MambaFusion/experiments/Fixed_STHAT/models/35000.pth
   strict_load_g: true
-  resume_state: ~
+  resume_state: /groups/rls/blozanod/MambaFusion/experiments/Fixed_STHAT/training_states/35000_patched.state
   experiments_root: ~
 
 train:
@@ -90,7 +94,7 @@ train:
     reduction: mean
   edge_opt:
     type: GWLoss
-    loss_weight: 0.25
+    loss_weight: 0.0
 
 # Validation
 val:
