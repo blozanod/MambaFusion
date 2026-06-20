@@ -2,10 +2,10 @@
 
 #$ -M blozanod@nd.edu
 #$ -m abe
-#$ -pe smp 32
+#$ -pe smp 24
 #$ -q gpu@@crc_a10
 #$ -N OffsetAnalysis
-#$ -l gpu_card=4
+#$ -l gpu_card=3
 #$ -cwd
 
 # Usage:
@@ -23,7 +23,7 @@ fi
 conda activate MambaTraining
 cd /groups/rls/blozanod/MambaFusion
 
-torchrun --nproc_per_node=4 analysis/offset_analysis.py \
+torchrun --nproc_per_node=3 analysis/offset_analysis.py \
     --models_dir "$1" \
     --config main/config_newarch.yml \
     --data_root /groups/rls/blozanod/MambaFusion/dataset/RealBSR_RAW_testpatch \
