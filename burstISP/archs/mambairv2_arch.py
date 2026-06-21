@@ -933,6 +933,11 @@ class MambaIRv2(nn.Module):
             if self.conv_last.bias is not None:
                 nn.init.zeros_(self.conv_last.bias)
 
+        # Zero Initialize the skip projection
+        nn.init.zeros_(self.skip_proj.weight)
+        if self.skip_proj.bias is not None:
+            nn.init.zeros_(self.skip_proj.bias)
+
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
             trunc_normal_(m.weight, std=.02)

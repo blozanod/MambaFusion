@@ -21,6 +21,11 @@ class MambaFusionModel(SRModel):
         if 'gt' in data:
             self.gt = data['gt'].to(self.device) # [B, C, H, W]
 
+    @staticmethod
+    def compand(x, mu=24.0):
+        # Signed mu law
+        return torch.sign(x) * torch.log1p(mu * x.abs()) / math.log1p(mu)
+
     # Modified from sr_model.py to include bf16 and alignment loss
     def optimize_parameters(self, current_iter):
         accumulation_steps = self.opt['train'].get('accumulation_steps', 1)
@@ -43,41 +48,18 @@ class MambaFusionModel(SRModel):
             l_total = 0
             loss_dict = OrderedDict()
 
-            """ ISP Pipeline For Training
-            out_float = self.output.float()
-            gt_float = self.gt.float()
-
-            # Autoexposure
-            gt_mean = gt_float.mean(dim=(1, 2, 3), keepdim=True)
-            exposure_factor = 0.2 / (gt_mean + 1e-6)
-
-            out_scaled = out_float * exposure_factor
-            gt_scaled = gt_float * exposure_factor
-
-            # Map predictions with differentiable pipeline
-            out_mapped = differentiable_benchmark_isp(out_scaled)
-
-            # Map GT with normal pipeline, same as validation
-            with torch.no_grad():
-                # Clipping
-                gt_clipped = torch.clamp(gt_scaled, min=1e-6, max=1.0)
-                
-                # Gamma
-                gt_gamma = gt_clipped ** (1.0 / 2.2)
-                
-                # Smoothstep
-                gt_mapped = 3 * (gt_gamma ** 2) - 2 * (gt_gamma ** 3)
-            """
+            # Projection into SRGB via Signed Mu-Law
+            cp, cg = self.compand(self.output), self.compand(self.gt)
 
             # pixel loss
             if self.cri_pix:
-                l_pix = self.cri_pix(self.output, self.gt)
+                l_pix = self.cri_pix(cp, cg)
                 l_total += l_pix
                 loss_dict['l_pix'] = l_pix
 
             # Edge Loss
             if self.cri_edge:
-                l_edge = self.cri_edge(self.output, self.gt)
+                l_edge = self.cri_edge(cp, cg)
                 l_total += l_edge
                 loss_dict['l_edge'] = l_edge
 
