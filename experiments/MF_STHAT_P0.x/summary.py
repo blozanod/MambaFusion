@@ -64,4 +64,4 @@ def generate_statistics_markdown(log_file_path, output_md_path):
 
 if __name__ == "__main__":
     # Substitute log path mapping natively
-    generate_statistics_markdown('train_STHAT_GW_20260608_214821.log', 'training_statistics.md')
+    generate_statistics_markdown('train_MF_STHAT_P0.x_20260620_225026.log', 'training_statistics.md')
