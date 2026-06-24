@@ -49,6 +49,7 @@ _USE_WINDOW = True
 def _init_worker(use_window):
     global _USE_WINDOW
     _USE_WINDOW = use_window
+    cv2.setNumThreads(0)
 
 
 def luma4(f):
