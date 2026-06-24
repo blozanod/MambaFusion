@@ -1,3 +1,7 @@
+# GENERATE TIME: Sat Jun 20 22:50:26 2026
+# CMD:
+# train.py -opt config_refined.yml --launcher pytorch
+
 # config.yml
 name: MF_STHAT_P0.x
 model_type: MambaFusionModel

@@ -25,7 +25,7 @@ cd /groups/rls/blozanod/MambaFusion
 
 torchrun --nproc_per_node=4 analysis/burst_ablation.py \
     --model_path "$1" \
-    --config main/config_newarch.yml \
+    --config main/config_refined.yml \
     --data_root /groups/rls/blozanod/MambaFusion/dataset/RealBSR_RAW_testpatch \
     --seed 42 \
     --crop_border 40 \
