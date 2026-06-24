@@ -2,9 +2,10 @@
 
 #$ -M blozanod@nd.edu
 #$ -m abe
-#$ -pe smp 64
-#$ -q long
+#$ -pe smp 24
+#$ -q gpu@@crc_a10
 #$ -N GateAMotion
+#$ -l gpu_card=3
 #$ -cwd
 
 # Gate-A: Inter-frame camera motion measurement (CPU-only, no GPU needed).
