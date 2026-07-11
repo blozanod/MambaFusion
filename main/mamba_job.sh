@@ -17,3 +17,9 @@ conda activate MambaTraining
 cd /groups/rls/blozanod/MambaFusion/main
 
 torchrun --nproc_per_node=4  train.py -opt "$1" --launcher pytorch
+
+# Post-training analysis: runs once the job's GPU allocation is still held,
+# resolves the run's experiment folder from the config's `name:` field, and
+# writes the logfile dashboard/summary + checkpoint progress visualization
+# under analysis/outputs/<name>/. See analysis/run_analysis.py.
+python /groups/rls/blozanod/MambaFusion/analysis/run_analysis.py --config "$1"

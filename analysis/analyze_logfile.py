@@ -1,20 +1,39 @@
 #!/usr/bin/env python3
 """
 MambaFusion Training Log Analyzer
-Parses a BasicSR training log and generates a comprehensive diagnostic dashboard.
-Usage: python analyze_mambafusion_log.py <path_to_log_file>
+
+Parses a BasicSR-style training log and generates a diagnostic dashboard PNG
+plus a markdown summary. Every loss term (any `l_<name>: <value>` token on a
+training line) and every validation metric (any `# <name>: <value> Best: ...`
+line in a Validation block) is discovered dynamically from the log itself, so
+this works whether the run logs one loss/metric or a dozen — nothing about
+the loss functions or metrics is hardcoded.
+
+Usage:
+    python analyze_logfile.py --log <path_to_log_file> [--output-dir <dir>] [--config <path_to_yaml>]
+
+`--config` is optional; if given, per-loss weights are read from its `train`
+section (any `<name>_opt.loss_weight`) and used to compute a weighted total
+loss. Without it, all discovered losses are weighted equally (1.0) in the
+"total" series.
 """
 
+import argparse
+import os
 import re
 import sys
-import os
-from collections import defaultdict
+
+import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from matplotlib.ticker import FuncFormatter
-import numpy as np
+
+try:
+    import yaml
+except ImportError:
+    yaml = None
 
 # ─────────────────────────── THEME ────────────────────────────────────────────
 BG        = "#0d1117"
@@ -22,13 +41,12 @@ PANEL     = "#161b22"
 BORDER    = "#30363d"
 TEXT      = "#e6edf3"
 MUTED     = "#7d8590"
-ACCENT_1  = "#58a6ff"   # pixel loss
-ACCENT_2  = "#f78166"   # perceptual loss
-ACCENT_3  = "#3fb950"   # sobel loss
-ACCENT_4  = "#d2a8ff"   # total loss
-ACCENT_5  = "#ffa657"   # PSNR
-ACCENT_6  = "#ff7b72"   # best PSNR marker
-ACCENT_LR = "#79c0ff"   # learning rate
+ACCENT_LR = "#79c0ff"
+ACCENT_BEST = "#ff7b72"
+
+# Color cycle for an arbitrary number of losses / metrics.
+PALETTE = ["#58a6ff", "#f78166", "#3fb950", "#d2a8ff", "#ffa657",
+           "#ff7b72", "#79c0ff", "#e3b341", "#56d4dd", "#f778ba"]
 
 plt.rcParams.update({
     "figure.facecolor":  BG,
@@ -50,494 +68,610 @@ plt.rcParams.update({
 
 # ──────────────────────────── PARSER ──────────────────────────────────────────
 
+# Matches the header of a training-progress line, e.g.:
+#   2026-06-20 22:55:30,574 INFO: [MF_ST..][epoch:  0, iter:     100, lr:(1.000e-06,)] ...
+RE_HEADER = re.compile(
+    r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+ INFO: "
+    r"\[[^\]]*\]\[epoch:\s*(?P<epoch>\d+),\s*iter:\s*(?P<iter>[\d,]+),"
+    r"\s*lr:\((?P<lr>[\d.eE+-]+),?\)\]"
+)
+# Any loss token: `l_<name>: <value>`. Matches however many are present.
+RE_LOSS = re.compile(r"\b(l_\w+):\s*([\d.eE+-]+)")
+# Any bare "iter: N," occurrence — used to back-associate a validation block
+# with the most recent training iteration above it.
+RE_ITER_ANY = re.compile(r"iter:\s*([\d,]+),")
+# Validation block header, e.g. "INFO: Validation RealBSR_val"
+RE_VAL_HEADER = re.compile(r"INFO: Validation\s+(\S+)")
+# One metric line inside a validation block, e.g.:
+#   "\t # psnr_srgb: 21.9998\tBest: 21.9998 @ 5000 iter"
+RE_VAL_METRIC = re.compile(r"#\s*(\w+):\s*([\d.]+)\s*Best:\s*([\d.]+)\s*@\s*([\d,]+)\s*iter")
+
+# Config facts pulled from the log's own `dict2str(opt)` dump, for display only.
+CONFIG_PATTERNS = {
+    "name":          r"^\s*name:\s+(.+)$",
+    "model_type":    r"model_type:\s+(.+)",
+    "scale":         r"^\s{2}scale:\s+(\d+)",
+    "num_gpu":       r"num_gpu:\s+(\d+)",
+    "manual_seed":   r"manual_seed:\s+(\d+)",
+    "total_iter":    r"total_iter:\s+(\d+)",
+    "batch_per_gpu": r"batch_size_per_gpu:\s+(\d+)",
+    "num_frames":    r"num_frames:\s+(\d+)",
+    "num_feat":      r"num_feat:\s+(\d+)",
+    "depths":        r"depths:\s+(\[.+?\])",
+    "num_heads":     r"num_heads:\s+(\[.+?\])",
+    "upsampler":     r"upsampler:\s+(.+)",
+    "optimizer":     r"type:\s+(AdamW|Adam|SGD)",
+    "lr":            r"^\s+lr:\s+([\d.eE+-]+)",
+    "weight_decay":  r"weight_decay:\s+([\d.eE+-]+)",
+    "scheduler":     r"type:\s+(CosineAnnealingRestartLR|StepLR|MultiStepLR)",
+    "train_images":  r"Number of train images:\s+([\d,]+)",
+    "val_images":    r"Number of val images.*?:\s+([\d,]+)",
+    "parameters":    r"with parameters:\s+([\d,]+)",
+    "val_freq":      r"val_freq:\s+(\d+)",
+    "print_freq":    r"print_freq:\s+(\d+)",
+    "save_freq":     r"save_checkpoint_freq:\s+(\d+)",
+    "time_consumed": r"Time consumed:\s+(.+)",
+    "pytorch_ver":   r"PyTorch:\s+(.+)",
+}
+
+
 def parse_log(path):
-    """Return config dict, train_records list, val_records list."""
+    """Parse a training log.
 
-    config   = {}
-    training = []   # {iter, epoch, lr, l_pix, l_percep, l_sobel, total, timestamp}
-    val      = []   # {iter, psnr, best_psnr, best_iter}
+    Returns:
+        config: dict of display facts (best-effort regex scrape of the log's
+            own option dump)
+        training: list of {ts, epoch, iter, lr, losses: {name: value}}
+        val: list of {iter, metrics: {name: {value, best, best_iter}}}
+        loss_keys: list of loss names in first-seen order
+        metric_names: list of validation metric names in first-seen order
+    """
+    with open(path, "r", errors="ignore") as f:
+        text = f.read()
+    lines = text.splitlines()
 
-    # Patterns
-    p_train = re.compile(
-        r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+ INFO: \[Mamba\.\.\]"
-        r"\[epoch:\s*(\d+), iter:\s*([\d,]+),\s*lr:\(([\d.e+-]+),\)\]"
-        r".*?l_pix:\s*([\d.e+-]+)"
-        r".*?l_percep:\s*([\d.e+-]+)"
-        r".*?l_sobel:\s*([\d.e+-]+)"
-    )
-    p_val   = re.compile(
-        r"INFO: Validation.*\n\s*# psnr:\s*([\d.]+)\s*Best:\s*([\d.]+)\s*@\s*([\d,]+)\s*iter"
-    )
-    p_cfg_kv = re.compile(r"^\s{2}(\w+):\s+(.+)$")
+    training = []
+    loss_keys = []
+    for line in lines:
+        m = RE_HEADER.search(line)
+        if not m:
+            continue
+        it = int(m.group("iter").replace(",", ""))
+        losses = {}
+        for key, val_str in RE_LOSS.findall(line):
+            try:
+                losses[key] = float(val_str)
+            except ValueError:
+                continue
+            if key not in loss_keys:
+                loss_keys.append(key)
+        training.append({
+            "ts": m.group("ts"),
+            "epoch": int(m.group("epoch")),
+            "iter": it,
+            "lr": float(m.group("lr")),
+            "losses": losses,
+        })
 
-    # Config block items we care about
-    cfg_keys = {
-        "name", "model_type", "scale", "num_gpu", "manual_seed",
-        "total_iter",
-    }
-
-    in_config = False
-    lines = open(path).read()
-
-    # ── Parse training lines (line-by-line for speed) ──────────────────────────
-    for line in lines.splitlines():
-        m = p_train.search(line)
-        if m:
-            ts, epoch, it, lr, l_pix, l_percep, l_sobel = m.groups()
-            it_val   = int(it.replace(",", ""))
-            l_p      = float(l_pix)
-            l_per    = float(l_percep)
-            l_s      = float(l_sobel)
-            # Weighted total matching the config weights: 1.0*pix + 0.05*percep + 0.1*sobel
-            total    = l_p + 0.05 * l_per + 0.1 * l_s
-            training.append({
-                "iter":    it_val,
-                "epoch":   int(epoch),
-                "lr":      float(lr),
-                "l_pix":   l_p,
-                "l_percep":l_per,
-                "l_sobel": l_s,
-                "total":   total,
-                "ts":      ts,
-            })
-
-    # ── Parse validation blocks ─────────────────────────────────────────────────
-    # Need multi-line match; use regex over full text
-    p_val2 = re.compile(
-        r"iter:\s*([\d,]+),.*?\n.*?Saving models.*?\n.*?Validation.*?\n"
-        r"\s+# psnr:\s*([\d.]+)\s+Best:\s*([\d.]+)\s*@\s*([\d,]+)\s*iter",
-        re.MULTILINE
-    )
-    # Simpler: just find psnr lines paired with the preceding save iter
-    save_iters = []
-    psnr_lines = []
-    for i, line in enumerate(lines.splitlines()):
-        if "Saving models and training states" in line:
-            # find the iter from the previous training line
-            pass
-        if "# psnr:" in line:
-            m2 = re.search(r"psnr:\s*([\d.]+)\s+Best:\s*([\d.]+)\s*@\s*([\d,]+)\s*iter", line)
-            if m2:
-                psnr, best_psnr, best_iter = m2.groups()
-                psnr_lines.append({
-                    "psnr":      float(psnr),
-                    "best_psnr": float(best_psnr),
-                    "best_iter": int(best_iter.replace(",", "")),
-                })
-
-    # Assign iters to val records based on "Saving models" lines above each val
-    all_lines = lines.splitlines()
-    val_idx = 0
-    for i, line in enumerate(all_lines):
-        if "# psnr:" in line and val_idx < len(psnr_lines):
-            # Look backward for the most recent save iter
-            for j in range(i, max(i - 30, 0), -1):
-                m3 = re.search(r"iter:\s*([\d,]+),", all_lines[j])
-                if m3:
-                    save_it = int(m3.group(1).replace(",", ""))
-                    psnr_lines[val_idx]["iter"] = save_it
+    val = []
+    metric_names = []
+    n = len(lines)
+    i = 0
+    while i < n:
+        hm = RE_VAL_HEADER.search(lines[i])
+        if not hm:
+            i += 1
+            continue
+        block_metrics = {}
+        j = i + 1
+        while j < n:
+            mm = RE_VAL_METRIC.search(lines[j])
+            if not mm:
+                break
+            name, value, best, best_iter = mm.groups()
+            block_metrics[name] = {
+                "value": float(value),
+                "best": float(best),
+                "best_iter": int(best_iter.replace(",", "")),
+            }
+            if name not in metric_names:
+                metric_names.append(name)
+            j += 1
+        if block_metrics:
+            iter_val = None
+            for k in range(i, max(i - 30, -1), -1):
+                im = RE_ITER_ANY.search(lines[k])
+                if im:
+                    iter_val = int(im.group(1).replace(",", ""))
                     break
-            else:
-                psnr_lines[val_idx]["iter"] = 0
-            val_idx += 1
+            val.append({"iter": iter_val if iter_val is not None else 0, "metrics": block_metrics})
+        i = j if j > i else i + 1
 
-    val = psnr_lines
-
-    # ── Extract key config facts ────────────────────────────────────────────────
-    config_patterns = {
-        "name":          r"name:\s+(.+)",
-        "model_type":    r"model_type:\s+(.+)",
-        "scale":         r"^\s{2}scale:\s+(\d+)",
-        "num_gpu":       r"num_gpu:\s+(\d+)",
-        "manual_seed":   r"manual_seed:\s+(\d+)",
-        "total_iter":    r"total_iter:\s+(\d+)",
-        "batch_per_gpu": r"batch_size_per_gpu:\s+(\d+)",
-        "num_frames":    r"num_frames:\s+(\d+)",
-        "num_feat":      r"num_feat:\s+(\d+)",
-        "depths":        r"depths:\s+(\[.+?\])",
-        "num_heads":     r"num_heads:\s+(\[.+?\])",
-        "mlp_ratio":     r"mlp_ratio:\s+(\d+)",
-        "upsampler":     r"upsampler:\s+(.+)",
-        "optimizer":     r"type:\s+(AdamW|Adam|SGD)",
-        "lr":            r"lr:\s+([\d.e+-]+)",
-        "weight_decay":  r"weight_decay:\s+([\d.e+-]+)",
-        "scheduler":     r"type:\s+(CosineAnnealingRestartLR|StepLR|MultiStepLR)",
-        "eta_min":       r"eta_min:\s+([\de.+-]+)",
-        "train_images":  r"Number of train images:\s+([\d,]+)",
-        "val_images":    r"Number of val images.*?:\s+([\d,]+)",
-        "parameters":    r"with parameters:\s+([\d,]+)",
-        "train_dataset": r"name:\s+(RealBSR_\w+)",
-        "val_freq":      r"val_freq:\s+(\d+)",
-        "print_freq":    r"print_freq:\s+(\d+)",
-        "save_freq":     r"save_checkpoint_freq:\s+(\d+)",
-        "time_consumed": r"Time consumed:\s+(.+)",
-        "pytorch_ver":   r"PyTorch:\s+(.+)",
-        "pixel_loss_w":  r"loss_weight:\s+([\d.]+)",
-        "percep_weight": r"perceptual_weight:\s+([\d.]+)",
-        "sobel_weight":  r"loss_weight:\s+([\d.]+)",
-    }
-
-    for key, pat in config_patterns.items():
-        m = re.search(pat, lines, re.MULTILINE)
+    config = {}
+    for key, pat in CONFIG_PATTERNS.items():
+        m = re.search(pat, text, re.MULTILINE)
         if m:
             config[key] = m.group(1).strip()
 
-    # Training stats
-    config["start_iter"] = training[0]["iter"]  if training else 0
+    config["start_iter"] = training[0]["iter"] if training else 0
     config["end_iter"]   = training[-1]["iter"] if training else 0
-    config["start_ts"]   = training[0]["ts"]    if training else "N/A"
-    config["end_ts"]     = training[-1]["ts"]   if training else "N/A"
+    config["start_ts"]   = training[0]["ts"] if training else "N/A"
+    config["end_ts"]     = training[-1]["ts"] if training else "N/A"
 
-    return config, training, val
+    return config, training, val, loss_keys, metric_names
 
 
-# ─────────────────────────── SMOOTHING ────────────────────────────────────────
+# ─────────────────────────── LOSS WEIGHTS (from --config) ─────────────────────
+
+def load_loss_weights(config_path, loss_keys):
+    """Best-effort mapping of logged loss keys (e.g. 'l_pix') to a weight,
+    read from a training YAML's `train.*_opt.loss_weight` entries.
+
+    Matching is name-based: an option block named e.g. `pixel_opt` is matched
+    against a logged key `l_pix` if either name is a prefix of the other
+    (after stripping the `l_`/`_opt` decoration). Unmatched or unresolved
+    loss keys default to weight 1.0.
+    """
+    weights = {k: 1.0 for k in loss_keys}
+    resolved = {k: False for k in loss_keys}
+    if not config_path or yaml is None:
+        return weights, resolved
+
+    try:
+        with open(config_path, "r") as f:
+            opt = yaml.safe_load(f)
+    except (OSError, yaml.YAMLError):
+        return weights, resolved
+
+    train_opt = (opt or {}).get("train", {}) or {}
+    opt_blocks = {
+        key[:-4]: block for key, block in train_opt.items()
+        if key.endswith("_opt") and isinstance(block, dict)
+    }
+
+    for key in loss_keys:
+        short = key[2:] if key.startswith("l_") else key  # 'l_pix' -> 'pix'
+        for opt_name, block in opt_blocks.items():
+            if opt_name.startswith(short) or short.startswith(opt_name):
+                weights[key] = float(block.get("loss_weight", 1.0))
+                resolved[key] = True
+                break
+
+    return weights, resolved
+
+
+# ─────────────────────────── PER-BLOCK STATS ──────────────────────────────────
+
+def compute_blocks(training, val):
+    """Partition training records into blocks bounded by validation
+    iterations: (0, v1], (v1, v2], ... plus a trailing partial block after the
+    last validation (if training continued past it, e.g. an in-progress run).
+    """
+    records = sorted(training, key=lambda r: r["iter"])
+    boundaries = sorted({v["iter"] for v in val if v.get("iter")})
+
+    blocks = []
+    prev = 0
+    for b in boundaries:
+        block_recs = [r for r in records if prev < r["iter"] <= b]
+        if block_recs:
+            blocks.append((prev, b, block_recs))
+        prev = b
+
+    tail_recs = [r for r in records if r["iter"] > prev]
+    if tail_recs:
+        blocks.append((prev, tail_recs[-1]["iter"], tail_recs))
+
+    if not blocks and records:
+        blocks.append((0, records[-1]["iter"], records))
+
+    return blocks
+
+
+def block_loss_stats(block_recs, loss_keys, weights):
+    """mean/std per loss key over one block, plus the weighted total."""
+    stats = {}
+    for key in loss_keys:
+        vals = [r["losses"][key] for r in block_recs if key in r["losses"]]
+        if vals:
+            stats[key] = (float(np.mean(vals)), float(np.std(vals)))
+        else:
+            stats[key] = None
+
+    totals = []
+    for r in block_recs:
+        if not r["losses"]:
+            continue
+        totals.append(sum(weights.get(k, 1.0) * v for k, v in r["losses"].items()))
+    stats["__total__"] = (float(np.mean(totals)), float(np.std(totals))) if totals else None
+    return stats
+
+
+# ─────────────────────────── SMOOTHING / FORMATTING ───────────────────────────
 
 def smooth(values, window=50):
     """Causal moving average."""
+    values = np.asarray(values, dtype=float)
     if len(values) < window:
-        return np.array(values, dtype=float)
+        return values
     kernel = np.ones(window) / window
-    padded = np.pad(values, (window - 1, 0), mode='edge')
-    return np.convolve(padded, kernel, mode='valid')
+    padded = np.pad(values, (window - 1, 0), mode="edge")
+    return np.convolve(padded, kernel, mode="valid")
 
-
-# ─────────────────────────── FORMATTING ───────────────────────────────────────
 
 def fmt_k(x, _):
     return f"{int(x/1000)}k" if x >= 1000 else str(int(x))
 
-def sci(x):
-    return f"{x:.4e}"
-
 
 # ─────────────────────────── PLOT ─────────────────────────────────────────────
 
-def plot_dashboard(config, training, val, out_path):
-    iters   = np.array([r["iter"]    for r in training])
-    l_pix   = np.array([r["l_pix"]   for r in training])
-    l_per   = np.array([r["l_percep"] for r in training])
-    l_sob   = np.array([r["l_sobel"] for r in training])
-    l_tot   = np.array([r["total"]   for r in training])
-    lrs     = np.array([r["lr"]      for r in training])
-
-    v_iters = np.array([r["iter"]    for r in val if "iter" in r])
-    v_psnr  = np.array([r["psnr"]    for r in val if "iter" in r])
-    best_psnr = max(r["best_psnr"] for r in val) if val else 0
-    best_iter = next((r["best_iter"] for r in val if r["best_psnr"] == best_psnr), 0)
-
+def plot_dashboard(config, training, val, loss_keys, metric_names, weights, out_path):
+    iters = np.array([r["iter"] for r in training])
+    lrs   = np.array([r["lr"] for r in training])
     W = 50  # smoothing window
 
-    fig = plt.figure(figsize=(20, 26), facecolor=BG)
-    fig.text(0.5, 0.985, "MambaFusion — Training Diagnostic Dashboard",
-             ha="center", va="top", color=TEXT,
-             fontsize=18, fontweight="bold", fontfamily="monospace")
-    fig.text(0.5, 0.967, f"{config.get('name','N/A')}  ·  {config.get('start_ts','').split()[0]}  →  {config.get('end_ts','').split()[0]}",
-             ha="center", va="top", color=MUTED, fontsize=10)
+    total = np.array([
+        sum(weights.get(k, 1.0) * r["losses"].get(k, 0.0) for k in loss_keys)
+        for r in training
+    ]) if training else np.array([])
 
-    gs = gridspec.GridSpec(5, 2, figure=fig,
-                           left=0.07, right=0.97,
-                           top=0.965, bottom=0.03,
-                           hspace=0.55, wspace=0.35)
+    per_metric_series = {}
+    for name in metric_names:
+        m_iters, m_vals, m_best, m_best_iter = [], [], [], []
+        for v in val:
+            if name in v["metrics"]:
+                m_iters.append(v["iter"])
+                m_vals.append(v["metrics"][name]["value"])
+                m_best.append(v["metrics"][name]["best"])
+                m_best_iter.append(v["metrics"][name]["best_iter"])
+        per_metric_series[name] = (np.array(m_iters), np.array(m_vals), m_best, m_best_iter)
 
-    # ── 0. Summary stats card (full row) ──────────────────────────────────────
+    # Build a dynamic list of (title, draw_fn) panels, packed 2-per-row below
+    # a full-width summary card.
+    panels = []
+
+    def draw_losses(ax):
+        for idx, key in enumerate(loss_keys):
+            color = PALETTE[idx % len(PALETTE)]
+            vals = np.array([r["losses"].get(key, np.nan) for r in training])
+            ax.plot(iters, vals, color=color, alpha=0.15, linewidth=0.5)
+            ax.plot(iters, smooth(vals, W), color=color, linewidth=1.4,
+                    label=f"{key} (w={weights.get(key, 1.0):g})")
+        ax.set_xlabel("Iteration", color=MUTED)
+        ax.set_ylabel("Loss Value", color=MUTED)
+        ax.xaxis.set_major_formatter(FuncFormatter(fmt_k))
+        ax.legend(loc="upper right", fontsize=7.5)
+        ax.grid(True, alpha=0.4)
+
+    if loss_keys:
+        panels.append(("Individual Losses (raw + smoothed)", draw_losses))
+
+    def draw_total(ax):
+        ax.plot(iters, total, color=PALETTE[3], alpha=0.15, linewidth=0.5)
+        ax.plot(iters, smooth(total, W), color=PALETTE[3], linewidth=1.8, label="Total weighted loss")
+        ax.set_xlabel("Iteration", color=MUTED)
+        ax.set_ylabel("Loss Value", color=MUTED)
+        ax.xaxis.set_major_formatter(FuncFormatter(fmt_k))
+        ax.legend(loc="upper right", fontsize=8)
+        ax.grid(True, alpha=0.4)
+
+    if loss_keys:
+        panels.append(("Total Weighted Loss", draw_total))
+
+    def make_metric_panel(name):
+        def draw(ax):
+            m_iters, m_vals, m_best, m_best_iter = per_metric_series[name]
+            if len(m_iters):
+                best_val = m_best[-1]
+                best_it = m_best_iter[-1]
+                ax.plot(m_iters, m_vals, color=PALETTE[4], linewidth=1.8,
+                        marker="o", markersize=4, markerfacecolor=PALETTE[4], label=name)
+                ax.axhline(best_val, color=ACCENT_BEST, linewidth=1.2, linestyle="--",
+                           label=f"Best: {best_val:.4f} @ {best_it:,}")
+                ax.axvline(best_it, color=ACCENT_BEST, linewidth=0.8, linestyle=":", alpha=0.7)
+                best_idx = int(np.argmax(m_vals))
+                ax.scatter([m_iters[best_idx]], [m_vals[best_idx]], color=ACCENT_BEST, s=70, zorder=5)
+                ax.scatter([m_iters[-1]], [m_vals[-1]], color=PALETTE[4], s=70, marker="D", zorder=5,
+                           label=f"Final: {m_vals[-1]:.4f}")
+            ax.set_title(name, color=TEXT, fontsize=10, pad=6)
+            ax.set_xlabel("Iteration", color=MUTED)
+            ax.set_ylabel(name, color=MUTED)
+            ax.xaxis.set_major_formatter(FuncFormatter(fmt_k))
+            ax.legend(loc="best", fontsize=7, ncol=2)
+            ax.grid(True, alpha=0.4)
+        return draw
+
+    for name in metric_names:
+        panels.append((f"Validation: {name}", make_metric_panel(name)))
+
+    def draw_lr(ax):
+        ax.plot(iters, lrs, color=ACCENT_LR, linewidth=1.2)
+        ax.set_xlabel("Iteration", color=MUTED)
+        ax.set_ylabel("LR", color=MUTED)
+        ax.xaxis.set_major_formatter(FuncFormatter(fmt_k))
+        ax.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{x:.2e}"))
+        ax.grid(True, alpha=0.4)
+
+    panels.append(("Learning Rate Schedule", draw_lr))
+
+    def draw_composition(ax):
+        raw_total = np.sum([np.array([r["losses"].get(k, 0.0) for r in training]) for k in loss_keys], axis=0)
+        fracs = []
+        for key in loss_keys:
+            vals = np.array([r["losses"].get(key, 0.0) for r in training])
+            fracs.append(smooth(vals / (raw_total + 1e-12), W))
+        ax.stackplot(iters, *fracs, colors=[PALETTE[i % len(PALETTE)] for i in range(len(loss_keys))],
+                     labels=loss_keys, alpha=0.75)
+        ax.set_xlabel("Iteration", color=MUTED)
+        ax.set_ylabel("Fraction", color=MUTED)
+        ax.xaxis.set_major_formatter(FuncFormatter(fmt_k))
+        ax.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{x:.0%}"))
+        ax.set_ylim(0, 1)
+        ax.legend(loc="upper right", fontsize=8)
+        ax.grid(True, axis="y", alpha=0.4)
+
+    if len(loss_keys) > 1:
+        panels.append(("Loss Composition (fraction of raw total)", draw_composition))
+
+    n_panel_rows = (len(panels) + 1) // 2
+    n_rows = 1 + n_panel_rows
+    fig = plt.figure(figsize=(20, 6 + 4.2 * n_panel_rows), facecolor=BG)
+    fig.text(0.5, 0.985 - 0.01 * (14 / n_rows), "MambaFusion — Training Diagnostic Dashboard",
+              ha="center", va="top", color=TEXT, fontsize=18, fontweight="bold", fontfamily="monospace")
+    fig.text(0.5, 0.965, f"{config.get('name', 'N/A')}  ·  {config.get('start_ts', '').split()[0] if config.get('start_ts') else ''}"
+                          f"  →  {config.get('end_ts', '').split()[0] if config.get('end_ts') else ''}",
+              ha="center", va="top", color=MUTED, fontsize=10)
+
+    gs = gridspec.GridSpec(n_rows, 2, figure=fig, left=0.06, right=0.97, top=0.965, bottom=0.03,
+                            hspace=0.55, wspace=0.35, height_ratios=[1.1] + [1.6] * n_panel_rows)
+
+    # ── Summary card (full width, row 0) ────────────────────────────────────
     ax_info = fig.add_subplot(gs[0, :])
     ax_info.set_facecolor(PANEL)
     ax_info.axis("off")
 
-    # Group into columns
-    loss_weights = {
-        "l_pix":   1.0,
-        "l_percep": float(config.get("percep_weight", 0.05)),
-        "l_sobel":  0.1,
-    }
+    best_summary = []
+    for name in metric_names:
+        _, m_vals, m_best, m_best_iter = per_metric_series[name]
+        if len(m_best):
+            best_summary.append((name, m_best[-1], m_best_iter[-1], m_vals[-1] if len(m_vals) else None))
 
     col1 = [
-        ("Model",         config.get("name",        "—")),
-        ("Model Type",    config.get("model_type",  "—")),
-        ("Scale Factor",  f"×{config.get('scale','—')}"),
-        ("Parameters",    f"{config.get('parameters','—')}"),
-        ("Num Frames",    config.get("num_frames",  "—")),
-        ("Features",      config.get("num_feat",    "—")),
-        ("Depths",        config.get("depths",      "—")),
+        ("Model",       config.get("name", "—")),
+        ("Model Type",  config.get("model_type", "—")),
+        ("Scale",       f"×{config.get('scale', '—')}"),
+        ("Parameters",  config.get("parameters", "—")),
+        ("Num Frames",  config.get("num_frames", "—")),
+        ("GPUs",        config.get("num_gpu", "—")),
     ]
     col2 = [
-        ("Optimizer",     config.get("optimizer",   "—")),
-        ("LR (init)",     config.get("lr",          "—")),
-        ("Weight Decay",  config.get("weight_decay","—")),
-        ("Scheduler",     config.get("scheduler",   "—")),
-        ("LR η_min",      config.get("eta_min",     "—")),
-        ("Batch/GPU",     config.get("batch_per_gpu","—")),
-        ("GPUs",          config.get("num_gpu",     "—")),
+        ("Optimizer",   config.get("optimizer", "—")),
+        ("LR (init)",   config.get("lr", "—")),
+        ("Weight Decay", config.get("weight_decay", "—")),
+        ("Scheduler",   config.get("scheduler", "—")),
+        ("Batch/GPU",   config.get("batch_per_gpu", "—")),
+        ("Val Freq",    config.get("val_freq", "—")),
     ]
     col3 = [
-        ("Total Iters",   f"{int(config.get('total_iter',0)):,}"),
-        ("Completed",     f"{config.get('end_iter',0):,}"),
-        ("Val Freq",      config.get("val_freq",    "—")),
-        ("Train Images",  config.get("train_images","—")),
-        ("Val Images",    config.get("val_images",  "—")),
-        ("Time Consumed", config.get("time_consumed","—")),
-        ("PyTorch",       config.get("pytorch_ver", "—")),
+        ("Total Iters", f"{int(config.get('total_iter', 0)):,}" if config.get("total_iter") else "—"),
+        ("Completed",   f"{config.get('end_iter', 0):,}"),
+        ("Train Images", config.get("train_images", "—")),
+        ("Val Images",  config.get("val_images", "—")),
+        ("Time Consumed", config.get("time_consumed", "—")),
+        ("PyTorch",     config.get("pytorch_ver", "—")),
     ]
-    col4 = [
-        ("Best PSNR",     f"▶  {best_psnr:.4f} dB"),
-        ("Best @ Iter",   f"{best_iter:,}"),
-        ("Final PSNR",    f"{v_psnr[-1]:.4f} dB" if len(v_psnr) else "—"),
-        ("PSNR Drop",     f"{best_psnr - (v_psnr[-1] if len(v_psnr) else best_psnr):.4f} dB"),
-        ("Loss: l_pix w", f"{loss_weights['l_pix']}"),
-        ("Loss: percep w",f"{loss_weights['l_percep']}"),
-        ("Loss: sobel w", f"{loss_weights['l_sobel']}"),
-    ]
+    col4 = [("Losses tracked", ", ".join(loss_keys) if loss_keys else "—")]
+    for name, best_v, best_it, final_v in best_summary:
+        col4.append((f"Best {name}", f"{best_v:.4f} @ {best_it:,}"))
 
     cols = [col1, col2, col3, col4]
     x_positions = [0.0, 0.25, 0.50, 0.75]
     for ci, (col, xp) in enumerate(zip(cols, x_positions)):
         for ri, (label, val_str) in enumerate(col):
             y = 0.90 - ri * 0.135
-            ax_info.text(xp,       y, label + ":", color=MUTED,  fontsize=8,  ha="left", va="top", transform=ax_info.transAxes)
-            ax_info.text(xp+0.005, y - 0.055, val_str,   color=ACCENT_1 if ci == 3 and ri == 0 else TEXT,
-                         fontsize=8.5, fontweight="bold" if ci == 3 and ri == 0 else "normal",
+            ax_info.text(xp, y, label + ":", color=MUTED, fontsize=8, ha="left", va="top",
+                         transform=ax_info.transAxes)
+            ax_info.text(xp + 0.005, y - 0.055, str(val_str), color=TEXT, fontsize=8.5,
                          ha="left", va="top", transform=ax_info.transAxes)
 
-    # Thin separator below
-    line = plt.Line2D([0.01, 0.99], [-0.07, -0.07], color=BORDER, linewidth=0.8, transform=ax_info.transAxes, clip_on=False)
+    line = plt.Line2D([0.01, 0.99], [-0.07, -0.07], color=BORDER, linewidth=0.8,
+                       transform=ax_info.transAxes, clip_on=False)
     ax_info.add_line(line)
 
-    # ── 1. Individual losses ───────────────────────────────────────────────────
-    ax1 = fig.add_subplot(gs[1, 0])
-    raw_alpha = 0.18
-    ax1.plot(iters, l_pix,  color=ACCENT_1, alpha=raw_alpha, linewidth=0.5)
-    ax1.plot(iters, l_per,  color=ACCENT_2, alpha=raw_alpha, linewidth=0.5)
-    ax1.plot(iters, l_sob,  color=ACCENT_3, alpha=raw_alpha, linewidth=0.5)
-    ax1.plot(iters, smooth(l_pix, W),  color=ACCENT_1, linewidth=1.4, label=f"l_pix (w=1.0)")
-    ax1.plot(iters, smooth(l_per, W),  color=ACCENT_2, linewidth=1.4, label=f"l_percep (w=0.05)")
-    ax1.plot(iters, smooth(l_sob, W),  color=ACCENT_3, linewidth=1.4, label=f"l_sobel (w=0.1)")
-    ax1.set_title("Individual Losses (raw + smoothed)", color=TEXT, fontsize=10, pad=6)
-    ax1.set_xlabel("Iteration", color=MUTED)
-    ax1.set_ylabel("Loss Value", color=MUTED)
-    ax1.xaxis.set_major_formatter(FuncFormatter(fmt_k))
-    ax1.legend(loc="upper right", fontsize=7.5)
-    ax1.grid(True, axis="both", alpha=0.4)
-    ax1.set_facecolor(PANEL)
-
-    # ── 2. Total (weighted) loss ───────────────────────────────────────────────
-    ax2 = fig.add_subplot(gs[1, 1])
-    ax2.plot(iters, l_tot,         color=ACCENT_4, alpha=0.18, linewidth=0.5)
-    ax2.plot(iters, smooth(l_tot, W), color=ACCENT_4, linewidth=1.8, label="Total weighted loss")
-    ax2.set_title("Total Weighted Loss", color=TEXT, fontsize=10, pad=6)
-    ax2.set_xlabel("Iteration", color=MUTED)
-    ax2.set_ylabel("Loss Value", color=MUTED)
-    ax2.xaxis.set_major_formatter(FuncFormatter(fmt_k))
-    ax2.legend(loc="upper right", fontsize=8)
-    ax2.grid(True, axis="both", alpha=0.4)
-    ax2.set_facecolor(PANEL)
-
-    # ── 3. PSNR over validation steps ─────────────────────────────────────────
-    ax3 = fig.add_subplot(gs[2, :])
-    if len(v_iters):
-        ax3.plot(v_iters, v_psnr, color=ACCENT_5, linewidth=1.8,
-                 marker="o", markersize=4, markerfacecolor=ACCENT_5, label="PSNR (dB)")
-        # Shade the gap between current and best
-        ax3.axhline(best_psnr, color=ACCENT_6, linewidth=1.2, linestyle="--",
-                    label=f"Best: {best_psnr:.4f} dB @ iter {best_iter:,}")
-        ax3.axvline(best_iter, color=ACCENT_6, linewidth=0.8, linestyle=":", alpha=0.7)
-        ax3.fill_between(v_iters, v_psnr, best_psnr,
-                         where=(v_psnr < best_psnr),
-                         alpha=0.12, color=ACCENT_6, label="Gap from best")
-        # Mark best and final
-        best_idx_v = np.argmax(v_psnr)
-        ax3.scatter([v_iters[best_idx_v]], [v_psnr[best_idx_v]],
-                    color=ACCENT_6, s=80, zorder=5, label=f"Peak @ {v_iters[best_idx_v]:,}")
-        ax3.scatter([v_iters[-1]], [v_psnr[-1]],
-                    color=ACCENT_5, s=80, marker="D", zorder=5,
-                    label=f"Final: {v_psnr[-1]:.4f} dB")
-
-    ax3.set_title("Validation PSNR at Each Checkpoint", color=TEXT, fontsize=10, pad=6)
-    ax3.set_xlabel("Iteration", color=MUTED)
-    ax3.set_ylabel("PSNR (dB)", color=MUTED)
-    ax3.xaxis.set_major_formatter(FuncFormatter(fmt_k))
-    ax3.legend(loc="lower left", fontsize=8, ncol=3)
-    ax3.grid(True, axis="both", alpha=0.4)
-    ax3.set_facecolor(PANEL)
-
-    # ── 4. Learning rate schedule ──────────────────────────────────────────────
-    ax4 = fig.add_subplot(gs[3, 0])
-    ax4.plot(iters, lrs, color=ACCENT_LR, linewidth=1.2)
-    ax4.set_title("Learning Rate Schedule", color=TEXT, fontsize=10, pad=6)
-    ax4.set_xlabel("Iteration", color=MUTED)
-    ax4.set_ylabel("LR", color=MUTED)
-    ax4.xaxis.set_major_formatter(FuncFormatter(fmt_k))
-    ax4.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{x:.2e}"))
-    ax4.grid(True, axis="both", alpha=0.4)
-    ax4.set_facecolor(PANEL)
-
-    # ── 5. Loss composition ratio ──────────────────────────────────────────────
-    ax5 = fig.add_subplot(gs[3, 1])
-    # Compute contribution of each UNWEIGHTED loss to total raw sum
-    raw_total  = l_pix + l_per + l_sob
-    r_pix_frac = l_pix / (raw_total + 1e-12)
-    r_per_frac = l_per / (raw_total + 1e-12)
-    r_sob_frac = l_sob / (raw_total + 1e-12)
-    ax5.stackplot(iters,
-                  smooth(r_pix_frac, W),
-                  smooth(r_per_frac, W),
-                  smooth(r_sob_frac, W),
-                  colors=[ACCENT_1, ACCENT_2, ACCENT_3],
-                  labels=["l_pix", "l_percep", "l_sobel"],
-                  alpha=0.75)
-    ax5.set_title("Loss Composition (fraction of raw total)", color=TEXT, fontsize=10, pad=6)
-    ax5.set_xlabel("Iteration", color=MUTED)
-    ax5.set_ylabel("Fraction", color=MUTED)
-    ax5.xaxis.set_major_formatter(FuncFormatter(fmt_k))
-    ax5.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{x:.0%}"))
-    ax5.set_ylim(0, 1)
-    ax5.legend(loc="upper right", fontsize=8)
-    ax5.grid(True, axis="y", alpha=0.4)
-    ax5.set_facecolor(PANEL)
-
-    # ── 6. Loss vs PSNR overlay (dual axis) ───────────────────────────────────
-    ax6 = fig.add_subplot(gs[4, :])
-    ax6b = ax6.twinx()
-    ax6b.set_facecolor(PANEL)
-
-    ax6.plot(iters, smooth(l_tot, W), color=ACCENT_4, linewidth=1.6, label="Total loss (smoothed)", zorder=3)
-    ax6.set_xlabel("Iteration", color=MUTED)
-    ax6.set_ylabel("Total Loss", color=ACCENT_4)
-    ax6.xaxis.set_major_formatter(FuncFormatter(fmt_k))
-    ax6.tick_params(axis='y', colors=ACCENT_4)
-    ax6.grid(True, axis="both", alpha=0.35)
-    ax6.set_facecolor(PANEL)
-
-    if len(v_iters):
-        ax6b.plot(v_iters, v_psnr, color=ACCENT_5, linewidth=1.8,
-                  marker="o", markersize=5, markerfacecolor=ACCENT_5,
-                  label="PSNR", zorder=4)
-        ax6b.axhline(best_psnr, color=ACCENT_6, linewidth=1.0,
-                     linestyle="--", alpha=0.8, label=f"Best PSNR {best_psnr:.4f}")
-    ax6b.set_ylabel("PSNR (dB)", color=ACCENT_5)
-    ax6b.tick_params(axis='y', colors=ACCENT_5)
-
-    # Combine legends
-    lines_a, labels_a = ax6.get_legend_handles_labels()
-    lines_b, labels_b = ax6b.get_legend_handles_labels()
-    ax6.legend(lines_a + lines_b, labels_a + labels_b, loc="lower left",
-               fontsize=8, ncol=3)
-    ax6.set_title("Total Loss vs. PSNR — Joint View", color=TEXT, fontsize=10, pad=6)
+    # ── Remaining panels, 2 per row ──────────────────────────────────────────
+    for idx, (title, draw_fn) in enumerate(panels):
+        row = 1 + idx // 2
+        col = idx % 2
+        ax = fig.add_subplot(gs[row, col])
+        ax.set_facecolor(PANEL)
+        ax.set_title(title, color=TEXT, fontsize=10, pad=6)
+        draw_fn(ax)
 
     plt.savefig(out_path, dpi=150, bbox_inches="tight", facecolor=BG)
     plt.close(fig)
-    print(f"[✓] Dashboard saved → {out_path}")
 
 
-# ──────────────────────────── CONSOLE SUMMARY ─────────────────────────────────
+# ─────────────────────────── MARKDOWN SUMMARY ─────────────────────────────────
 
-def print_summary(config, training, val):
-    sep = "─" * 62
-    def row(k, v): print(f"  {k:<30} {v}")
+def write_summary_md(config, training, val, loss_keys, metric_names, weights, weight_resolved, out_path):
+    lines = []
+    lines.append(f"# Training Summary — {config.get('name', 'N/A')}")
+    lines.append("")
+    lines.append(f"- Model type: `{config.get('model_type', '—')}`")
+    lines.append(f"- Scale: ×{config.get('scale', '—')}, Parameters: {config.get('parameters', '—')}")
+    lines.append(f"- GPUs: {config.get('num_gpu', '—')}, Batch/GPU: {config.get('batch_per_gpu', '—')}")
+    lines.append(f"- Optimizer: {config.get('optimizer', '—')}, Initial LR: {config.get('lr', '—')}, "
+                 f"Scheduler: {config.get('scheduler', '—')}")
+    lines.append(f"- Planned iters: {config.get('total_iter', '—')}, Completed: {config.get('end_iter', 0):,}")
+    lines.append(f"- Time consumed: {config.get('time_consumed', '—')}")
+    lines.append(f"- Range: {config.get('start_ts', '—')} → {config.get('end_ts', '—')}")
+    lines.append("")
 
-    print(f"\n{'═'*62}")
-    print(f"  MambaFusion Training Summary")
-    print(f"{'═'*62}")
+    lines.append("## Loss Weights")
+    lines.append("")
+    lines.append("| Loss | Weight | Source |")
+    lines.append("|---|---|---|")
+    for key in loss_keys:
+        source = "config" if weight_resolved.get(key) else "default (1.0)"
+        lines.append(f"| `{key}` | {weights.get(key, 1.0):g} | {source} |")
+    lines.append("")
 
-    print(f"\n  ── Model ─────────────────────────────────────────────")
-    row("Name:",          config.get("name", "—"))
-    row("Type:",          config.get("model_type", "—"))
-    row("Scale:",         f"×{config.get('scale','—')}")
-    row("Parameters:",    config.get("parameters","—"))
-    row("Num frames:",    config.get("num_frames","—"))
-    row("Num features:",  config.get("num_feat","—"))
-    row("Depths:",        config.get("depths","—"))
-    row("PyTorch:",       config.get("pytorch_ver","—"))
+    # ── Per-block loss stats (mean ± std), blocks bounded by val iters ──────
+    blocks = compute_blocks(training, val)
+    lines.append("## Loss Statistics per Validation Interval (mean ± std)")
+    lines.append("")
+    header = "| Block (iters] | N | " + " | ".join(loss_keys) + " | Total (weighted) |"
+    sep = "|---|---|" + "---|" * len(loss_keys) + "---|"
+    lines.append(header)
+    lines.append(sep)
+    for start, end, recs in blocks:
+        stats = block_loss_stats(recs, loss_keys, weights)
+        row = [f"({start:,}, {end:,}]", str(len(recs))]
+        for key in loss_keys:
+            s = stats.get(key)
+            row.append(f"{s[0]:.5f} ± {s[1]:.5f}" if s else "—")
+        tot = stats.get("__total__")
+        row.append(f"{tot[0]:.5f} ± {tot[1]:.5f}" if tot else "—")
+        lines.append("| " + " | ".join(row) + " |")
+    lines.append("")
 
-    print(f"\n  ── Training Setup ────────────────────────────────────")
-    row("Optimizer:",     config.get("optimizer","—"))
-    row("Initial LR:",    config.get("lr","—"))
-    row("Weight decay:",  config.get("weight_decay","—"))
-    row("Scheduler:",     config.get("scheduler","—"))
-    row("η_min:",         config.get("eta_min","—"))
-    row("GPUs:",          config.get("num_gpu","—"))
-    row("Batch/GPU:",     config.get("batch_per_gpu","—"))
-    row("Planned iters:", f"{int(config.get('total_iter',0)):,}")
-    row("Completed iters:",f"{config.get('end_iter',0):,}")
-    row("Training time:", config.get("time_consumed","—"))
-
-    print(f"\n  ── Dataset ───────────────────────────────────────────")
-    row("Train images:",  config.get("train_images","—"))
-    row("Val images:",    config.get("val_images","—"))
-    row("Val frequency:", config.get("val_freq","—"))
-
-    print(f"\n  ── Loss Weights ──────────────────────────────────────")
-    row("Pixel (Charbonnier):", "1.0")
-    row("Perceptual (VGG19):", config.get("percep_weight","0.05"))
-    row("Sobel:",              "0.1")
-
+    # ── Whole-run stats ──────────────────────────────────────────────────────
     if training:
-        l_pix  = [r["l_pix"]   for r in training]
-        l_per  = [r["l_percep"] for r in training]
-        l_sob  = [r["l_sobel"] for r in training]
-        l_tot  = [r["total"]   for r in training]
-        # Compare early vs late
-        n = max(len(training)//10, 1)
-        early_tot = np.mean(l_tot[:n])
-        late_tot  = np.mean(l_tot[-n:])
+        lines.append("## Loss Statistics — Whole Run (mean ± std)")
+        lines.append("")
+        whole_stats = block_loss_stats(training, loss_keys, weights)
+        for key in loss_keys:
+            s = whole_stats.get(key)
+            if s:
+                lines.append(f"- `{key}`: {s[0]:.5f} ± {s[1]:.5f}")
+        tot = whole_stats.get("__total__")
+        if tot:
+            lines.append(f"- **Total (weighted)**: {tot[0]:.5f} ± {tot[1]:.5f}")
+        lines.append("")
 
-        print(f"\n  ── Loss Statistics ───────────────────────────────────")
-        print(f"  {'Metric':<28} {'First 10%':>12} {'Last 10%':>12} {'Δ':>10}")
-        print(f"  {sep}")
-        for name_l, arr in [("l_pix", l_pix), ("l_percep", l_per), ("l_sobel", l_sob), ("total (weighted)", l_tot)]:
-            e = np.mean(arr[:n])
-            l = np.mean(arr[-n:])
-            d = l - e
-            print(f"  {name_l:<28} {e:>12.5f} {l:>12.5f} {d:>+10.5f}")
+    # ── Validation metrics ───────────────────────────────────────────────────
+    if val:
+        lines.append("## Validation Metrics")
+        lines.append("")
+        header = "| Iter | " + " | ".join(metric_names) + " |"
+        sep = "|---|" + "---|" * len(metric_names)
+        lines.append(header)
+        lines.append(sep)
+        for v in val:
+            row = [f"{v['iter']:,}"]
+            for name in metric_names:
+                m = v["metrics"].get(name)
+                row.append(f"{m['value']:.4f}" if m else "—")
+            lines.append("| " + " | ".join(row) + " |")
+        lines.append("")
+
+        lines.append("### Best per Metric")
+        lines.append("")
+        lines.append("| Metric | Best | @ Iter | Final | Δ (final − best) |")
+        lines.append("|---|---|---|---|---|")
+        for name in metric_names:
+            recs_with_metric = [v for v in val if name in v["metrics"]]
+            if not recs_with_metric:
+                continue
+            last = recs_with_metric[-1]["metrics"][name]
+            final_val = recs_with_metric[-1]["metrics"][name]["value"]
+            best_val = last["best"]
+            best_iter = last["best_iter"]
+            delta = final_val - best_val
+            lines.append(f"| {name} | {best_val:.4f} | {best_iter:,} | {final_val:.4f} | {delta:+.4f} |")
+        lines.append("")
+
+    with open(out_path, "w") as f:
+        f.write("\n".join(lines))
+
+
+def print_console_summary(config, training, val, loss_keys, metric_names, weights):
+    sep = "─" * 62
+    print(f"\n{'═'*62}")
+    print(f"  MambaFusion Training Summary — {config.get('name', 'N/A')}")
+    print(f"{'═'*62}")
+    print(f"  Records: {len(training):,} training lines, {len(val)} validation checkpoints")
+    print(f"  Losses tracked: {', '.join(loss_keys) if loss_keys else '—'}")
+    print(f"  Metrics tracked: {', '.join(metric_names) if metric_names else '—'}")
+
+    blocks = compute_blocks(training, val)
+    if blocks:
+        print(f"\n  ── Loss stats per validation interval ({sep[:20]}")
+        for start, end, recs in blocks:
+            stats = block_loss_stats(recs, loss_keys, weights)
+            parts = [f"{k}={stats[k][0]:.5f}±{stats[k][1]:.5f}" for k in loss_keys if stats.get(k)]
+            tot = stats.get("__total__")
+            tot_str = f" total={tot[0]:.5f}±{tot[1]:.5f}" if tot else ""
+            print(f"  ({start:,}, {end:,}]  n={len(recs):<5} " + "  ".join(parts) + tot_str)
 
     if val:
-        psnr_vals  = [r["psnr"] for r in val if "iter" in r]
-        val_iters  = [r["iter"] for r in val if "iter" in r]
-        best_psnr  = max(r["best_psnr"] for r in val)
-        best_iter  = next(r["best_iter"] for r in val if r["best_psnr"] == best_psnr)
-
-        print(f"\n  ── Validation PSNR ───────────────────────────────────")
-        row("Validation steps:",  str(len(psnr_vals)))
-        row("First PSNR:",        f"{psnr_vals[0]:.4f} dB  @ iter {val_iters[0]:,}" if psnr_vals else "—")
-        row("Best PSNR:",         f"{best_psnr:.4f} dB  @ iter {best_iter:,}")
-        row("Final PSNR:",        f"{psnr_vals[-1]:.4f} dB  @ iter {val_iters[-1]:,}" if psnr_vals else "—")
-        drop = best_psnr - psnr_vals[-1] if psnr_vals else 0
-        row("Drop (best→final):", f"{drop:.4f} dB")
-
-        # Find where PSNR peaked
-        if len(psnr_vals) > 1:
-            peak_i = int(np.argmax(psnr_vals))
-            pct = val_iters[peak_i] / int(config.get("total_iter", val_iters[-1])) * 100
-            print(f"\n  ⚠  PSNR peaked at {pct:.1f}% of training ({val_iters[peak_i]:,} iters).")
-            if drop > 0.1:
-                print(f"  ⚠  Degradation of {drop:.4f} dB from peak — possible overfitting.")
-            elif drop > 0:
-                print(f"  ✓  Marginal degradation ({drop:.4f} dB) — training reasonably stable.")
-
+        print(f"\n  ── Best per metric {sep[:20]}")
+        for name in metric_names:
+            recs_with_metric = [v for v in val if name in v["metrics"]]
+            if not recs_with_metric:
+                continue
+            last = recs_with_metric[-1]["metrics"][name]
+            print(f"  {name}: best={last['best']:.4f} @ iter {last['best_iter']:,}  "
+                  f"final={recs_with_metric[-1]['metrics'][name]['value']:.4f}")
     print(f"\n{'═'*62}\n")
 
 
-# ──────────────────────────── MAIN ────────────────────────────────────────────
+# ──────────────────────────── ENTRY POINT ─────────────────────────────────────
+
+def run(log_path, output_dir, config_path=None):
+    """Run the full analysis for one log file, writing outputs into output_dir.
+    Callable directly (e.g. from run_analysis.py) as well as via the CLI."""
+    os.makedirs(output_dir, exist_ok=True)
+
+    config, training, val, loss_keys, metric_names = parse_log(log_path)
+    if not training:
+        print(f"[analyze_logfile][WARN] No training records parsed from {log_path}.")
+
+    weights, resolved = load_loss_weights(config_path, loss_keys)
+
+    print_console_summary(config, training, val, loss_keys, metric_names, weights)
+
+    dashboard_path = os.path.join(output_dir, "logfile_dashboard.png")
+    if training:
+        plot_dashboard(config, training, val, loss_keys, metric_names, weights, dashboard_path)
+        print(f"[analyze_logfile] Dashboard saved -> {dashboard_path}")
+
+    summary_path = os.path.join(output_dir, "logfile_summary.md")
+    write_summary_md(config, training, val, loss_keys, metric_names, weights, resolved, summary_path)
+    print(f"[analyze_logfile] Summary saved -> {summary_path}")
+
+    return {
+        "config": config, "training": training, "val": val,
+        "loss_keys": loss_keys, "metric_names": metric_names,
+    }
+
 
 def main():
-    if len(sys.argv) < 2:
-        log_path = "/groups/rls/blozanod/MambaFusion/experiments/MambaFusion_x4/MambaFusion_x4.log"
-    else:
-        log_path = sys.argv[1]
+    parser = argparse.ArgumentParser(description="Parse a MambaFusion/BasicSR training log into a dashboard + summary.")
+    parser.add_argument("--log", required=True, help="Path to the training .log file")
+    parser.add_argument("--output-dir", default=None,
+                         help="Directory to write logfile_dashboard.png / logfile_summary.md "
+                              "(default: analysis/outputs/<run name>/)")
+    parser.add_argument("--config", default=None,
+                         help="Optional training YAML, used to resolve loss weights")
+    args = parser.parse_args()
 
-    if not os.path.exists(log_path):
-        print(f"[ERROR] File not found: {log_path}")
+    if not os.path.exists(args.log):
+        print(f"[ERROR] File not found: {args.log}")
         sys.exit(1)
 
-    print(f"[·] Parsing log: {log_path}")
-    config, training, val = parse_log(log_path)
-    print(f"[·] Training records: {len(training):,}  |  Validation checkpoints: {len(val)}")
+    output_dir = args.output_dir
+    if output_dir is None:
+        # Infer the run name straight from the log so this works standalone,
+        # without requiring --config.
+        with open(args.log, "r", errors="ignore") as f:
+            head = f.read(4000)
+        m = re.search(r"^\s*name:\s+(.+)$", head, re.MULTILINE)
+        name = m.group(1).strip() if m else os.path.splitext(os.path.basename(args.log))[0]
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        output_dir = os.path.join(repo_root, "analysis", "outputs", name)
 
-    print_summary(config, training, val)
-
-    out_path = "/groups/rls/blozanod/MambaFusion/analysis/dashboards/train_MambaFusion_x4_run3_dashboard.png"
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    plot_dashboard(config, training, val, out_path)
+    run(args.log, output_dir, config_path=args.config)
 
 
 if __name__ == "__main__":

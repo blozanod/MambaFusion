@@ -11,13 +11,13 @@ Usage:
     python analysis/gate_a_motion.py [options]
 
 Options:
-    --config       Path to YAML config (default: main/config_refined.yml)
+    --config       Path to YAML config (default: main/config.yml)
     --train-root   Train split root dir (overrides config)
     --test-root    Test split root dir  (overrides config)
     --limit N      Process only first N bursts (smoke test)
     --num-workers  Parallel workers (default: cpu_count())
     --window / --no-window  2D Hann window before correlation (default: on)
-    --out-dir      Output directory for CSV, PNG, log (default: analysis/)
+    --out-dir      Output directory for CSV, PNG, log (default: analysis/outputs/gate_a)
 """
 
 import os
@@ -40,7 +40,7 @@ from skimage.registration import phase_cross_correlation
 
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-DEFAULT_CONFIG = os.path.join(REPO_ROOT, 'main', 'config_refined.yml')
+DEFAULT_CONFIG = os.path.join(REPO_ROOT, 'main', 'config.yml')
 
 # Global flag set per-worker by pool initializer — avoids repeated arg passing
 _USE_WINDOW = True
@@ -112,7 +112,7 @@ def main():
         description='Gate-A: inter-frame camera motion via phase correlation.'
     )
     parser.add_argument('--config', default=DEFAULT_CONFIG,
-                        help='YAML config path (default: main/config_refined.yml)')
+                        help='YAML config path (default: main/config.yml)')
     parser.add_argument('--train-root', default=None,
                         help='Train split root (overrides config)')
     parser.add_argument('--test-root', default=None,
@@ -136,7 +136,7 @@ def main():
 
     train_root = args.train_root or cfg['datasets']['train']['dataroot']
     test_root  = args.test_root  or cfg['datasets']['val']['dataroot']
-    out_dir    = args.out_dir    or os.path.join(REPO_ROOT, 'analysis')
+    out_dir    = args.out_dir    or os.path.join(REPO_ROOT, 'analysis', 'outputs', 'gate_a')
     os.makedirs(out_dir, exist_ok=True)
 
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')

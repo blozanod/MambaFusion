@@ -17,8 +17,8 @@ points.  Only the Δx and Δy channels (72 of the 112) are used to compute
 mean |offset| in pixels at that level's spatial resolution.
 
 Outputs:
-  - Log file  : analysis/ablation_logs/offset_analysis_<timestamp>.log
-  - Plot (PNG): analysis/ablation_logs/offset_analysis_<timestamp>.png
+  - Log file  : analysis/outputs/ablation_logs/offset_analysis_<timestamp>.log
+  - Plot (PNG): analysis/outputs/ablation_logs/offset_analysis_<timestamp>.png
 
 Run with:
     torchrun --nproc_per_node=4 analysis/offset_analysis.py \\
@@ -27,7 +27,7 @@ Run with:
         [--data_root   /path/to/RealBSR_RAW_testpatch] \\
         [--seed        42] \\
         [--num_frames  5] \\
-        [--log_dir     analysis/ablation_logs]
+        [--log_dir     analysis/outputs/ablation_logs]
 """
 
 import os
@@ -242,7 +242,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--models_dir', required=True,
                         help='Folder containing net_g_<iter>.pth checkpoints')
-    parser.add_argument('--config', default='main/config_newarch.yml',
+    parser.add_argument('--config', default='main/config.yml',
                         help='YAML config with network_g architecture params')
     parser.add_argument('--data_root',
                         default='/groups/rls/blozanod/MambaFusion/dataset/RealBSR_RAW_testpatch',
@@ -250,7 +250,7 @@ def main():
     parser.add_argument('--seed', type=int, default=42,
                         help='Base seed for frame selection')
     parser.add_argument('--num_frames', type=int, default=5)
-    parser.add_argument('--log_dir', default='analysis/ablation_logs')
+    parser.add_argument('--log_dir', default='analysis/outputs/ablation_logs')
     args = parser.parse_args()
 
     # --- Distributed ---

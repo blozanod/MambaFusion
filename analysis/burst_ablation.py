@@ -18,7 +18,7 @@ Run with:
         [--seed 42] \\
         [--crop_border 40] \\
         [--num_frames 5] \\
-        [--log_dir analysis/ablation_logs]
+        [--log_dir analysis/outputs/ablation_logs]
 """
 
 import os
@@ -139,7 +139,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_path', required=True,
                         help='Path to checkpoint (.pth)')
-    parser.add_argument('--config', default='main/config_newarch.yml',
+    parser.add_argument('--config', default='main/config.yml',
                         help='YAML config for network architecture')
     parser.add_argument('--data_root',
                         default='/groups/rls/blozanod/MambaFusion/dataset/RealBSR_RAW_testpatch',
@@ -150,7 +150,7 @@ def main():
                         help='Border pixels excluded from metric computation')
     parser.add_argument('--num_frames', type=int, default=5,
                         help='Number of LQ frames per burst')
-    parser.add_argument('--log_dir', default='analysis/ablation_logs',
+    parser.add_argument('--log_dir', default='analysis/outputs/ablation_logs',
                         help='Directory for log file output')
     args = parser.parse_args()
 

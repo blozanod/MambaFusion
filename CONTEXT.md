@@ -82,17 +82,26 @@ MambaFusion/
 ├── main/
 │   ├── train.py                  ← Training entry point
 │   ├── test.py                   ← Test/inference entry point
-│   ├── config_newarch.yml        ← Current reference config
-│   └── mamba_job.sh              ← HPC job submission script
+│   ├── config.yml                ← Current reference config (standardized name; was config_refined.yml)
+│   ├── mamba_job.sh              ← HPC job submission script; runs analysis/run_analysis.py after training
+│   └── _archive/Testing_Files/   ← Stale prototype scripts, superseded by train.py/test.py
 ├── analysis/                     ← Analysis and visualization scripts
 │   ├── visualize_inference.py    ← Run model + ISP + save PNG
-│   ├── visualize_progress.py     ← Training progress visualization
+│   ├── visualize_progress.py     ← Training progress visualization (all checkpoints, fixed burst set)
 │   ├── visualize_dataset.py      ← Dataset inspection
-│   └── analyze_logfile.py        ← Parse training logs
+│   ├── analyze_logfile.py        ← Parse training logs — dynamically discovers all losses/metrics
+│   ├── run_analysis.py           ← Orchestrator: log analysis + progress viz, triggered automatically at end of training
+│   ├── outputs/                  ← Gitignored generated artifacts; per-experiment results under outputs/<name>/
+│   └── _archive/                 ← Retired per-run inference dumps (see analysis/README.md)
 ├── experiments/                  ← Saved runs (configs, checkpoints, logs)
-│   └── STHAT_GW/                 ← Most recent completed run
+│   ├── STHAT_GW/                 ← Completed; best PSNR-sRGB ~24.09 dB
+│   ├── MF_STHAT_P0.x/            ← Current/active run (copied config_refined.yml — pre-rename, 300k schedule)
+│   └── _archive/                 ← Superseded runs, both architecture generations (see experiments/README.md)
 ├── dataset/
-│   └── Inference_Set/            ← 10 local test bursts for inference
+│   ├── Inference_Set/            ← 10 local test bursts for inference
+│   ├── RealBSR_RAW_testpatch/    ← Local mirror of the cluster val/test split
+│   ├── RealBSR_RAW_trainpatch/   ← Small local sample of the train split (pipeline testing only)
+│   └── _archive/                 ← Retired scratch data from early development
 └── papers/                       ← Reference papers (RealBSR-RAW, MambaIR, HAT, etc.)
 ```
 
@@ -116,12 +125,20 @@ All models, datasets, archs, and losses are registered via decorators (e.g. `@AR
 
 ---
 
-## Current Experiment: STHAT_GW (finished ~June 2026)
+## Previous Experiment: STHAT_GW (finished ~June 2026)
 
 - 100k iterations, 4 GPUs, Charbonnier + GWLoss (0.25)
 - **Best PSNR-sRGB**: ~24.09 dB @ ~35k iter; plateaued ~24.03 dB thereafter
 - PSNR-Linear declined after ~10k iter (33.0 → 31.7), suggesting the sRGB ISP mapping is partially absorbing model error
-- **Status**: Completed. Next step is empirical analysis to diagnose model failure modes before designing the next experiment.
+- **Status**: Completed.
+
+## Current Experiment: MF_STHAT_P0.x (active as of ~June 2026)
+
+- Follow-up to STHAT_GW, same architecture. Uses `main/config.yml` (named `config_refined.yml` at the time this run started; the config filename was later standardized).
+- Extended schedule: 300k total iterations (milestones at 100k/180k/250k/280k), vs. STHAT_GW's 100k.
+- Edge loss switched from GWLoss (0.25) to SobelLoss (0.5).
+- Checkpoints/training states saved through 40k iterations so far.
+- **Status**: In progress.
 
 ---
 
