@@ -71,6 +71,11 @@ dataset/*/
 !dataset/README.md
 *.state
 
+# Reorg: archived material and generated analysis/experiment artifacts
+**/_archive/
+analysis/outputs/
+experiments/*/visualization/
+
 # Environment variables
 .env
 .env.local
