@@ -6,6 +6,8 @@ MambaFusion is a **RAW burst super-resolution** model. Given a burst of N short-
 
 The project is a research prototype. Training runs on an HPC cluster (4× GPU). This local WSL2 repo is used for code development and inference/analysis only — the full dataset lives at `/groups/rls/blozanod/MambaFusion/dataset/` on the cluster.
 
+**Current direction (July 2026):** see [PLAN.md](PLAN.md) — porting to the standard SyntheticBurst benchmark as the primary instrument, with a diagnosis-led repair of the burst-utilization failure documented below.
+
 ---
 
 ## Dataset: RealBSR-RAW
@@ -20,6 +22,7 @@ The project is a research prototype. Training runs on an HPC cluster (4× GPU). 
 - During training, 5 of the 14 frames are randomly sampled per iteration; the reference frame (index 0) is always placed at the center position `N//2`.
 - The only data augmentation is a random RGGB-aware transpose (swaps G1↔G2 channels when transposing).
 - Local preview dataset: `dataset/Inference_Set/` — 10 test-set bursts with GT.
+- **Known confound**: the GT is captured at a different optical zoom and registered to the reference imperfectly, so pixel losses are partly optimized against misregistration noise (this is why eval crops a 40 px border, and part of the motivation for the SyntheticBurst port).
 
 ---
 
@@ -31,6 +34,7 @@ Defined in [burstISP/archs/mambafusion_arch.py](burstISP/archs/mambafusion_arch.
 - Pyramid (2-level) + Cascading + Deformable alignment via **DCNv4** (custom CUDA kernel, compiled at `burstISP/utils/DCNv4/`).
 - Extracts features from each LQ frame, computes DCN offsets relative to the center/reference frame, and returns aligned feature maps `[B, N, C, H, W]` plus reference features `ref_feats`.
 - Runs in **float32** (forced via `autocast(enabled=False)`) for numerical stability in offset computation.
+- **Note:** `ref_feats` is currently *unused* — `MambaFusionNet.forward` passes `(fused_input, fused_input)` to the restoration module. This was a deliberate experiment to reduce reliance on the reference frame (it did not help); the L1 experiment in PLAN.md reverts it by wiring `restoration(fused_input, ref_feats)`.
 
 ### 2. ST_HAT Fusion (`burstISP/archs/st_hat_fusion_arch.py`)
 - Input: aligned features `[B, N, C, H, W]`, output: single fused feature map `[B, C, H, W]`.
@@ -41,13 +45,15 @@ Defined in [burstISP/archs/mambafusion_arch.py](burstISP/archs/mambafusion_arch.
 - **Stage 2** (dimension collapse):
   - `FusionBlock`: cross-attention where only the reference frame provides queries, all frames provide keys/values → collapses burst to single map
   - `SpatialBlock` for refinement
-  - Residual from Stage 1 reference frame features (via 1×1 conv projection)
+  - Residual from Stage 1 features via 1×1 conv projection
+- **Note:** both Stage-2 residual paths currently use a **mean over frames** (`x_win.mean(dim=1)` in FusionBlock, `x_s1.mean(dim=1)` for the stage-2 skip) rather than the reference-frame slice the docstring describes. This was a deliberate experiment to reduce reference reliance (it did not help, and with imperfect alignment a cross-frame mean acts as a low-pass filter). Reverted to reference slices in the L1 experiment (PLAN.md).
 - **Stage 3** (depth_stage3 `RefinementBlock`s):
   - Each block: OCAB (overlapping cross-attention) → HAB (hybrid window + channel attention) → OCAB
   - Removes windowing artifacts and reweights features
 
 ### 3. MambaIRv2 Restoration (`burstISP/archs/mambairv2_arch.py`)
-- Input: fused features `[B, C, H, W]` + `ref_feats` from BurstAlign (used as ControlNet-style injection when `global_skip=True`).
+- Adapted from the public MambaIRv2 codebase (not original to this project).
+- Input: fused features `[B, C, H, W]`; second argument is a residual injected through a zero-init `skip_proj` (currently also the fused features — see `ref_feats` note above).
 - Mamba-based state space model (SSM) backbone with window attention, produces upscaled output `[B, 3, 8H, 8W]`.
 - Upsampler: `pixelshuffle` mode.
 
@@ -73,7 +79,7 @@ MambaFusion/
 │   ├── models/
 │   │   ├── mambafusion_model.py  ← Training/eval wrapper
 │   │   └── sr_model.py           ← Base model class
-│   ├── loss/losses.py            ← CharbonnierLoss, GWLoss, etc.
+│   ├── loss/losses.py            ← CharbonnierLoss, GWLoss, SobelLoss, etc.
 │   ├── metrics/psnr_ssim.py      ← calculate_psnr_srgb/linear, calculate_ssim_srgb
 │   └── utils/
 │       ├── img_util.py           ← ISP pipeline, image I/O
@@ -82,7 +88,7 @@ MambaFusion/
 ├── main/
 │   ├── train.py                  ← Training entry point
 │   ├── test.py                   ← Test/inference entry point
-│   ├── config.yml                ← Current reference config (standardized name; was config_refined.yml)
+│   ├── config.yml                ← Current reference config
 │   ├── mamba_job.sh              ← HPC job submission script; runs analysis/run_analysis.py after training
 │   └── _archive/Testing_Files/   ← Stale prototype scripts, superseded by train.py/test.py
 ├── analysis/                     ← Analysis and visualization scripts
@@ -90,19 +96,23 @@ MambaFusion/
 │   ├── visualize_progress.py     ← Training progress visualization (all checkpoints, fixed burst set)
 │   ├── visualize_dataset.py      ← Dataset inspection
 │   ├── analyze_logfile.py        ← Parse training logs — dynamically discovers all losses/metrics
-│   ├── run_analysis.py           ← Orchestrator: log analysis + progress viz, triggered automatically at end of training
+│   ├── run_analysis.py           ← Orchestrator: log analysis + progress viz, triggered at end of training
+│   ├── burst_ablation.py         ← Normal vs. all-ref two-pass eval (burst utilization)
+│   ├── offset_analysis.py        ← DCN offset magnitude across checkpoints
+│   ├── gate_a_motion.py          ← Phase-correlation inter-frame motion measurement
 │   ├── outputs/                  ← Gitignored generated artifacts; per-experiment results under outputs/<name>/
 │   └── _archive/                 ← Retired per-run inference dumps (see analysis/README.md)
 ├── experiments/                  ← Saved runs (configs, checkpoints, logs)
 │   ├── STHAT_GW/                 ← Completed; best PSNR-sRGB ~24.09 dB
-│   ├── MF_STHAT_P0.x/            ← Current/active run (copied config_refined.yml — pre-rename, 300k schedule)
-│   └── _archive/                 ← Superseded runs, both architecture generations (see experiments/README.md)
+│   ├── MF_STHAT_P0.x/            ← Completed (see below)
+│   └── _archive/                 ← Superseded runs (see experiments/README.md)
 ├── dataset/
 │   ├── Inference_Set/            ← 10 local test bursts for inference
 │   ├── RealBSR_RAW_testpatch/    ← Local mirror of the cluster val/test split
 │   ├── RealBSR_RAW_trainpatch/   ← Small local sample of the train split (pipeline testing only)
 │   └── _archive/                 ← Retired scratch data from early development
-└── papers/                       ← Reference papers (RealBSR-RAW, MambaIR, HAT, etc.)
+├── papers/                       ← Reference papers (RealBSR-RAW, MambaIR, HAT, etc.)
+└── PLAN.md                       ← Plan of record (July 2026)
 ```
 
 ---
@@ -117,28 +127,35 @@ All models, datasets, archs, and losses are registered via decorators (e.g. `@AR
 
 - **Optimizer**: AdamW, lr=1e-4, betas=(0.9, 0.99)
 - **Scheduler**: MultiStepLR (lr drops at milestones)
-- **Loss**: Charbonnier (pixel) + optional GWLoss (gradient/edge, weight=0.25 in STHAT_GW)
+- **Loss**: Charbonnier (pixel) + edge term (GWLoss 0.25 in STHAT_GW; SobelLoss 0.5 in MF_STHAT_P0.x), both computed on mu-law companded (μ=24) linear RGB in `MambaFusionModel.optimize_parameters`
 - **Gradient accumulation**: `accumulation_steps=2` → effective batch size = 2 × batch_per_gpu × n_gpus
 - **Mixed precision**: bfloat16 autocast in training; BurstAlign forced to float32
-- **EMA**: supported via `ema_decay` config key
+- **EMA**: supported via `ema_decay` config key (not enabled in recent runs)
 - **Logging**: file logger + optional TensorBoard; Weights & Biases supported
 
 ---
 
-## Previous Experiment: STHAT_GW (finished ~June 2026)
+## Completed Experiments
 
+### STHAT_GW (completed June 2026)
 - 100k iterations, 4 GPUs, Charbonnier + GWLoss (0.25)
-- **Best PSNR-sRGB**: ~24.09 dB @ ~35k iter; plateaued ~24.03 dB thereafter
-- PSNR-Linear declined after ~10k iter (33.0 → 31.7), suggesting the sRGB ISP mapping is partially absorbing model error
-- **Status**: Completed.
+- **Best PSNR-sRGB**: ~24.09 dB @ ~50k iter; plateaued ~24.03 dB
+- PSNR-Linear declined after ~10k iter (33.0 → 31.8)
 
-## Current Experiment: MF_STHAT_P0.x (active as of ~June 2026)
+### MF_STHAT_P0.x (completed 2026-06-23)
+- Follow-up to STHAT_GW, same architecture; edge loss switched to SobelLoss (0.5).
+- 100k iterations (the config was standardized as `main/config.yml`; an extended 300k schedule was considered but **not** run).
+- **Best PSNR-sRGB**: 24.151 dB @ 40k; final 24.023. Best PSNR-linear 33.017 @ 10k, declining to 31.74. Best SSIM 0.7322 @ 30k.
+- Training time: 2 days 2 h on 4× A10.
 
-- Follow-up to STHAT_GW, same architecture. Uses `main/config.yml` (named `config_refined.yml` at the time this run started; the config filename was later standardized).
-- Extended schedule: 300k total iterations (milestones at 100k/180k/250k/280k), vs. STHAT_GW's 100k.
-- Edge loss switched from GWLoss (0.25) to SobelLoss (0.5).
-- Checkpoints/training states saved through 40k iterations so far.
-- **Status**: In progress.
+---
+
+## Diagnostics Summary (June 2026 — basis for current plan)
+
+- **Burst ablation** (`analysis/burst_ablation.py`, P0.x @ 50k, 2377 test bursts): normal vs. all-reference-frames delta = +0.079 dB sRGB / −0.008 dB linear / +0.003 SSIM → **the model behaves as single-image SR**.
+- **Offset analysis** (`analysis/offset_analysis.py`): lv1 DCN offsets shrink 0.45 → 0.17 px over training; lv2 ~0.14 px; cascade ~0.57 px.
+- **Gate-A motion** (`analysis/gate_a_motion.py`): real inter-frame motion median **0.895 packed px** (≈1.8 raw px, ≈7 GT px), with a tail past 8 packed px — alignment compensates only a small fraction of real motion.
+- Outputs are blurry; hypothesized mechanism and repair ladder in [PLAN.md](PLAN.md).
 
 ---
 
