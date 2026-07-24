@@ -34,7 +34,7 @@ Defined in [burstISP/archs/mambafusion_arch.py](burstISP/archs/mambafusion_arch.
 - Pyramid (2-level) + Cascading + Deformable alignment via **DCNv4** (custom CUDA kernel, compiled at `burstISP/utils/DCNv4/`).
 - Extracts features from each LQ frame, computes DCN offsets relative to the center/reference frame, and returns aligned feature maps `[B, N, C, H, W]` plus reference features `ref_feats`.
 - Runs in **float32** (forced via `autocast(enabled=False)`) for numerical stability in offset computation.
-- **Note:** `ref_feats` is currently *unused* — `MambaFusionNet.forward` passes `(fused_input, fused_input)` to the restoration module. This was a deliberate experiment to reduce reliance on the reference frame (it did not help); the L1 experiment in PLAN.md reverts it by wiring `restoration(fused_input, ref_feats)`.
+- **Note:** `ref_feats` feeds the restoration module's zero-init `skip_proj` — `MambaFusionNet.forward` calls `restoration(fused_input, ref_feats)`. It was temporarily unwired (`(fused_input, fused_input)`) as a deliberate experiment to reduce reliance on the reference frame (it did not help); the L1 revert (PLAN.md) restored the wiring.
 
 ### 2. ST_HAT Fusion (`burstISP/archs/st_hat_fusion_arch.py`)
 - Input: aligned features `[B, N, C, H, W]`, output: single fused feature map `[B, C, H, W]`.
@@ -46,14 +46,14 @@ Defined in [burstISP/archs/mambafusion_arch.py](burstISP/archs/mambafusion_arch.
   - `FusionBlock`: cross-attention where only the reference frame provides queries, all frames provide keys/values → collapses burst to single map
   - `SpatialBlock` for refinement
   - Residual from Stage 1 features via 1×1 conv projection
-- **Note:** both Stage-2 residual paths currently use a **mean over frames** (`x_win.mean(dim=1)` in FusionBlock, `x_s1.mean(dim=1)` for the stage-2 skip) rather than the reference-frame slice the docstring describes. This was a deliberate experiment to reduce reference reliance (it did not help, and with imperfect alignment a cross-frame mean acts as a low-pass filter). Reverted to reference slices in the L1 experiment (PLAN.md).
+- **Note:** both Stage-2 residual paths use the **reference-frame slice** (`x_win[:, ref]` in FusionBlock, `x_s1[:, ref]` for the stage-2 skip), matching the class docstring. A deliberate experiment replaced them with a mean over frames to reduce reference reliance (it did not help, and with imperfect alignment a cross-frame mean acts as a low-pass filter); the L1 revert (PLAN.md) restored the reference slices.
 - **Stage 3** (depth_stage3 `RefinementBlock`s):
   - Each block: OCAB (overlapping cross-attention) → HAB (hybrid window + channel attention) → OCAB
   - Removes windowing artifacts and reweights features
 
 ### 3. MambaIRv2 Restoration (`burstISP/archs/mambairv2_arch.py`)
 - Adapted from the public MambaIRv2 codebase (not original to this project).
-- Input: fused features `[B, C, H, W]`; second argument is a residual injected through a zero-init `skip_proj` (currently also the fused features — see `ref_feats` note above).
+- Input: fused features `[B, C, H, W]`; second argument is a residual injected through a zero-init `skip_proj` (the aligned reference features `ref_feats` — see note above).
 - Mamba-based state space model (SSM) backbone with window attention, produces upscaled output `[B, 3, 8H, 8W]`.
 - Upsampler: `pixelshuffle` mode.
 
@@ -105,6 +105,7 @@ MambaFusion/
 ├── experiments/                  ← Saved runs (configs, checkpoints, logs)
 │   ├── STHAT_GW/                 ← Completed; best PSNR-sRGB ~24.09 dB
 │   ├── MF_STHAT_P0.x/            ← Completed (see below)
+│   ├── MF_STHAT_P1_RefRevert/    ← L1 revert run (PLAN.md), 35k schedule
 │   └── _archive/                 ← Superseded runs (see experiments/README.md)
 ├── dataset/
 │   ├── Inference_Set/            ← 10 local test bursts for inference
