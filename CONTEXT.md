@@ -26,6 +26,16 @@ The project is a research prototype. Training runs on an HPC cluster (4× GPU). 
 
 ---
 
+## Dataset: SyntheticBurst (L3/L4)
+
+- Standard benchmark protocol (DBSR/NTIRE), run wholesale via code vendored from the DBSR toolkit at `burstISP/data/dbsr/` (provenance + license in its README; CC BY-NC-SA 4.0, academic use only).
+- `SyntheticBurstDataset` (`burstISP/data/synthetic_burst_dataset.py`): **train** generates bursts on the fly from Zurich RAW-to-RGB canon JPGs (official parameters: 432-px padded random crop → inverse ISP → 14 random affine frames, translation ≤24 px / rotation ≤1°, ×4 downsample, RGGB mosaic, shot+read noise → `lq [14, 4, 48, 48]`, `gt [3, 384, 384]` linear RGB); **val** loads the official pre-generated 300-burst set exactly as distributed.
+- The generator's reference frame (index 0) is moved to the center slot `N//2` to match this codebase's reference convention (same trick as `BurstImageDataset`); ground-truth `flow_vectors` (LR-RGB resolution, pre-warp geometry) ride along in every train sample.
+- `oracle_align: true` (L4) warps each training frame onto the reference with those flows before returning the burst. The official val set ships no flows, so val inputs are never oracle-warped.
+- Samples carry **no `meta` key** (no camera pkl); the val loop and `save_img` treat metadata as optional. Headline eval is `calculate_psnr_synburst` — the official quantize-to-14-bit + `PSNR(boundary_ignore=40)` path, vendored verbatim.
+
+---
+
 ## Architecture: `MambaFusionNet`
 
 Defined in [burstISP/archs/mambafusion_arch.py](burstISP/archs/mambafusion_arch.py). Three sequential modules:
@@ -75,12 +85,16 @@ MambaFusion/
 │   │   ├── mambairv2_arch.py     ← Restoration backbone
 │   │   └── arch_util.py          ← Shared helpers (DCNv4Block, etc.)
 │   ├── data/
-│   │   └── burst_image_dataset.py ← BurstImageDataset
+│   │   ├── burst_image_dataset.py     ← BurstImageDataset (RealBSR-RAW)
+│   │   ├── synthetic_burst_dataset.py ← SyntheticBurstDataset (L3/L4, standard protocol)
+│   │   └── dbsr/                      ← Vendored DBSR toolkit code (generation, val set,
+│   │                                    official PSNR) — see its README for provenance/license
 │   ├── models/
 │   │   ├── mambafusion_model.py  ← Training/eval wrapper
 │   │   └── sr_model.py           ← Base model class
 │   ├── loss/losses.py            ← CharbonnierLoss, GWLoss, SobelLoss, etc.
 │   ├── metrics/psnr_ssim.py      ← calculate_psnr_srgb/linear, calculate_ssim_srgb
+│   ├── metrics/synburst_psnr.py  ← calculate_psnr_synburst (official SyntheticBurst eval)
 │   └── utils/
 │       ├── img_util.py           ← ISP pipeline, image I/O
 │       ├── options.py            ← YAML config parsing
@@ -98,7 +112,11 @@ MambaFusion/
 │   ├── analyze_logfile.py        ← Parse training logs — dynamically discovers all losses/metrics
 │   ├── run_analysis.py           ← Orchestrator: log analysis + progress viz, triggered at end of training
 │   ├── burst_ablation.py         ← Normal vs. all-ref two-pass eval (burst utilization)
+│   │                               + frame-drop curves (L5), realbsr/synburst datasets
 │   ├── offset_analysis.py        ← DCN offset magnitude across checkpoints
+│   ├── fusion_attention_mass.py  ← FusionBlock non-ref attention mass across checkpoints (L5)
+│   ├── exposure_drift.py         ← Mean linear output intensity vs GT across checkpoints (L5)
+│   ├── synburst_sanity.py        ← SyntheticBurst port smoke tests (CPU) + full-model check (GPU)
 │   ├── gate_a_motion.py          ← Phase-correlation inter-frame motion measurement
 │   ├── outputs/                  ← Gitignored generated artifacts; per-experiment results under outputs/<name>/
 │   └── _archive/                 ← Retired per-run inference dumps (see analysis/README.md)
@@ -106,6 +124,8 @@ MambaFusion/
 │   ├── STHAT_GW/                 ← Completed; best PSNR-sRGB ~24.09 dB
 │   ├── MF_STHAT_P0.x/            ← Completed (see below)
 │   ├── MF_STHAT_P1_RefRevert/    ← L1 revert run (PLAN.md), 35k schedule
+│   ├── MF_STHAT_L3_SynBase/      ← L3 SyntheticBurst baseline (PLAN.md), 100k
+│   ├── MF_STHAT_L4_Oracle{On,Off}/ ← L4 oracle-alignment pair (PLAN.md), 35k each
 │   └── _archive/                 ← Superseded runs (see experiments/README.md)
 ├── dataset/
 │   ├── Inference_Set/            ← 10 local test bursts for inference
@@ -128,7 +148,7 @@ All models, datasets, archs, and losses are registered via decorators (e.g. `@AR
 
 - **Optimizer**: AdamW, lr=1e-4, betas=(0.9, 0.99)
 - **Scheduler**: MultiStepLR (lr drops at milestones)
-- **Loss**: Charbonnier (pixel) + edge term (GWLoss 0.25 in STHAT_GW; SobelLoss 0.5 in MF_STHAT_P0.x), both computed on mu-law companded (μ=24) linear RGB in `MambaFusionModel.optimize_parameters`
+- **Loss**: Charbonnier (pixel) + edge term (GWLoss 0.25 in STHAT_GW; SobelLoss 0.5 in MF_STHAT_P0.x), both computed on mu-law companded (μ=24) linear RGB in `MambaFusionModel.optimize_parameters`. Companding is config-gated via `train.compand` (default `true`, so RealBSR configs reproduce exactly; the SyntheticBurst L3/L4 configs set it to `false` for plain losses on linear RGB)
 - **Gradient accumulation**: `accumulation_steps=2` → effective batch size = 2 × batch_per_gpu × n_gpus
 - **Mixed precision**: bfloat16 autocast in training; BurstAlign forced to float32
 - **EMA**: supported via `ema_decay` config key (not enabled in recent runs)
