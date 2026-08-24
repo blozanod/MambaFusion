@@ -23,7 +23,7 @@ re-implementation.
 | File here | Upstream path | Adaptations |
 |---|---|---|
 | `camera_pipeline.py` | `data/camera_pipeline.py` | none (verbatim) |
-| `processing_utils.py` | `data/processing_utils.py` | none (verbatim) |
+| `processing_utils.py` | `data/processing_utils.py` | bugfix in `random_resized_crop`: `orig_crop_sz` is a float-dtype tensor there; the two `random.randint(0, shape[-2] - orig_crop_sz[-2])`-style calls fed that float tensor straight to `random.randint`, whose `operator.index()` call requires an integer-dtype tensor. Fails immediately on Python 3.12 with recent torch ("only integer tensors of a single element can be converted to an index"); tolerated on some other version combos, which is presumably why upstream never hit it. Fixed by converting to plain Python ints first (same value — `.floor()` was already applied), matching the pattern the function already used two lines below for `r2`/`c2`. No other change to the function. |
 | `data_format_utils.py` | `utils/data_format_utils.py` | none (verbatim) |
 | `synthetic_burst_generation.py` | `data/synthetic_burst_generation.py` | 2 import lines re-pointed to this package (`data.camera_pipeline` → `burstISP.data.dbsr.camera_pipeline`, `utils.data_format_utils` → `burstISP.data.dbsr.data_format_utils`); everything else verbatim |
 | `synthetic_burst_val_set.py` | `dataset/synthetic_burst_val_set.py` | removed the `admin.environment` import; `root` is a required argument instead of falling back to `env_settings()` |

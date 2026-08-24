@@ -54,11 +54,20 @@ def random_resized_crop(frames, crop_sz, scale_range=None, ar_range=None):
 
     assert orig_crop_sz[-2] <= shape[-2] and orig_crop_sz[-1] <= shape[-1], 'Bug in crop size estimation!'
 
-    r1 = random.randint(0, shape[-2] - orig_crop_sz[-2])
-    c1 = random.randint(0, shape[-1] - orig_crop_sz[-1])
+    # Local fix (see burstISP/data/dbsr/README.md): orig_crop_sz is a float
+    # tensor; cast to plain Python ints before using in a range fed to
+    # random.randint, whose operator.index() call rejects float-dtype
+    # tensors ("only integer tensors of a single element can be converted
+    # to an index" on Python 3.12 / recent torch). Values are unchanged
+    # since .floor() was already applied above.
+    orig_h = orig_crop_sz[0].int().item()
+    orig_w = orig_crop_sz[1].int().item()
 
-    r2 = r1 + orig_crop_sz[0].int().item()
-    c2 = c1 + orig_crop_sz[1].int().item()
+    r1 = random.randint(0, shape[-2] - orig_h)
+    c1 = random.randint(0, shape[-1] - orig_w)
+
+    r2 = r1 + orig_h
+    c2 = c1 + orig_w
 
     frames_crop = frames[:, r1:r2, c1:c2]
 
