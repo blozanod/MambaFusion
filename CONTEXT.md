@@ -102,7 +102,13 @@ MambaFusion/
 ├── main/
 │   ├── train.py                  ← Training entry point
 │   ├── test.py                   ← Test/inference entry point
-│   ├── config.yml                ← Current reference config
+│   ├── config.yml                ← Current reference config (MF_STHAT_P0.x)
+│   ├── configs/                  ← Launch configs for not-yet-run experiments (see experiments/README.md);
+│   │                               train.py creates experiments/<name>/ itself once launched from here
+│   │   ├── MF_STHAT_P1_RefRevert.yml
+│   │   ├── MF_STHAT_L3_SynBase.yml
+│   │   ├── MF_STHAT_L4_OracleOn.yml
+│   │   └── MF_STHAT_L4_OracleOff.yml
 │   ├── mamba_job.sh              ← HPC job submission script; runs analysis/run_analysis.py after training
 │   └── _archive/Testing_Files/   ← Stale prototype scripts, superseded by train.py/test.py
 ├── analysis/                     ← Analysis and visualization scripts
@@ -120,13 +126,12 @@ MambaFusion/
 │   ├── gate_a_motion.py          ← Phase-correlation inter-frame motion measurement
 │   ├── outputs/                  ← Gitignored generated artifacts; per-experiment results under outputs/<name>/
 │   └── _archive/                 ← Retired per-run inference dumps (see analysis/README.md)
-├── experiments/                  ← Saved runs (configs, checkpoints, logs)
+├── experiments/                  ← Runs, created automatically by train.py on launch (configs, checkpoints, logs)
 │   ├── STHAT_GW/                 ← Completed; best PSNR-sRGB ~24.09 dB
 │   ├── MF_STHAT_P0.x/            ← Completed (see below)
-│   ├── MF_STHAT_P1_RefRevert/    ← L1 revert run (PLAN.md), 35k schedule
-│   ├── MF_STHAT_L3_SynBase/      ← L3 SyntheticBurst baseline (PLAN.md), 100k
-│   ├── MF_STHAT_L4_Oracle{On,Off}/ ← L4 oracle-alignment pair (PLAN.md), 35k each
 │   └── _archive/                 ← Superseded runs (see experiments/README.md)
+│   (MF_STHAT_P1_RefRevert/, MF_STHAT_L3_SynBase/, MF_STHAT_L4_Oracle{On,Off}/ — PLAN.md L1/L3/L4,
+│    not yet run; will appear here once launched from their main/configs/*.yml, see above)
 ├── dataset/
 │   ├── Inference_Set/            ← 10 local test bursts for inference
 │   ├── RealBSR_RAW_testpatch/    ← Local mirror of the cluster val/test split

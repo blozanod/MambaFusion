@@ -19,7 +19,7 @@ Two modes:
 Run with:
     python analysis/synburst_sanity.py --mode cpu
     python analysis/synburst_sanity.py --mode model \\
-        --config experiments/MF_STHAT_L3_SynBase/config.yml \\
+        --config main/configs/MF_STHAT_L3_SynBase.yml \\
         [--val_root /path/to/SyntheticBurstVal]
 """
 
@@ -277,7 +277,7 @@ def run_model_check(args):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', choices=['cpu', 'model'], default='cpu')
-    parser.add_argument('--config', default='experiments/MF_STHAT_L3_SynBase/config.yml',
+    parser.add_argument('--config', default='main/configs/MF_STHAT_L3_SynBase.yml',
                         help='Config with network_g params (model mode)')
     parser.add_argument('--zurich_root', default=None,
                         help='Zurich RAW-to-RGB root; a fixture is generated if omitted')
