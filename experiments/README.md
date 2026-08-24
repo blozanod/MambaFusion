@@ -20,7 +20,18 @@ Superseded experiments, kept for reference rather than deleted:
 
 ## Adding a new run
 
-Create `experiments/<name>/` directly under `experiments/` (no numbering needed) with its own copy of `main/config.yml` (set `name:` to match) and a `visualization/` subfolder for that run's own inference/progress outputs. When a run is superseded, move it into `experiments/_archive/` rather than deleting it.
+Create `experiments/<name>/` directly under `experiments/` (no numbering needed) with its own copy of `main/config.yml` (set `name:` to match). This copy documents the run's exact settings for future reference — `models/`, `training_states/`, and `visualization/` are created automatically, no manual setup needed.
+
+**Do not pass this in-place copy to `-opt` when launching.** `train.py`'s `make_exp_dirs()` unconditionally renames the *entire* `experiments/<name>/` folder to `..._archived_<timestamp>` at the start of every run, before copying the `-opt` config into the freshly recreated folder. If `-opt` pointed at a config living inside that same folder, the copy step reaches for a file that was just moved out from under it and the job dies immediately with a `FileNotFoundError` on `config.yml`. Instead, stage the launch config somewhere *outside* `experiments/<name>/` — e.g. copy it to `main/config_<name>.yml` — and point `qsub main/mamba_job.sh <staged path>` there:
+
+```bash
+cp experiments/<name>/config.yml main/config_<name>.yml
+qsub main/mamba_job.sh main/config_<name>.yml
+```
+
+`train.py` re-copies whatever `-opt` pointed to back into `experiments/<name>/` once the run starts, so the committed reference copy and the staged launch copy end up identical.
+
+When a run is superseded, move it into `experiments/_archive/` rather than deleting it.
 
 ## Automated post-training analysis
 
