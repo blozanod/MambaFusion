@@ -116,6 +116,7 @@ val:
     ssim:  # ours (linear-domain SSIM), kept alongside
       type: calculate_ssim
       crop_border: 40
+      input_order: CHW  # visuals are [C,H,W]; calculate_ssim defaults to HWC
       test_y_channel: false
       better: higher
 
