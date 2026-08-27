@@ -812,7 +812,7 @@ class MambaIRv2(nn.Module):
         super().__init__()
         num_in_ch = in_chans
         num_out_ch = out_chans
-        num_feat = 64
+        num_feat = 128
         self.img_range = img_range
         if in_chans == 3:
             rgb_mean = (0.4488, 0.4371, 0.4040)

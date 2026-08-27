@@ -4,6 +4,30 @@ import torch.nn as nn
 from burstISP.utils.registry import ARCH_REGISTRY
 from burstISP.archs.arch_util import DCNv4Block
 
+class PreAlign(nn.Module):
+    """ Projects input RGGB frames into feature space and
+    upsamples to Bayer grid resolution via PixelShuffle.
+
+    Allows alignment and downstream modules to operate on pixel grid instead 
+    of packed RGGB subpixel space.
+    """
+    def __init__(self, in_channels=4, num_feat=64):
+        super(PreAlign, self).__init__()
+        self.proj = nn.Sequential(
+            nn.Conv2d(in_channels, num_feat * 4, kernel_size=3, padding=1, stride=1),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Conv2d(num_feat * 4, num_feat * 4, kernel_size=3, padding=1, stride=1),
+            nn.LeakyReLU(0.1, inplace=True),
+        )
+        self.pixel_shuffle = nn.PixelShuffle(2)
+
+    def forward(self, x):
+        B, N, C, H, W = x.size()
+        x = x.view(B * N, C, H, W)
+        x = self.proj(x)
+        x = self.pixel_shuffle(x)
+        return x.view(B, N, -1, H * 2, W * 2)
+
 
 @ARCH_REGISTRY.register()
 class BurstAlign(nn.Module):
@@ -127,76 +151,69 @@ class BurstAlign(nn.Module):
 
         # Feature Extraction (all frames as one batch)
         burst_reshaped = x.view(B * N, C, H, W)
-        features_lv1_flat = self.feat_extractor_lv1(burst_reshaped)
+        curr_feat_lv1 = self.feat_extractor_lv1(burst_reshaped)   # (B*N, num_feat, H, W)
+        curr_feat_lv2 = self.feat_extractor_lv2(curr_feat_lv1)    # (B*N, num_feat, H/2, W/2)
 
-        features_lv1 = features_lv1_flat.view(B, N, -1, H, W)
-        features_lv2 = self.feat_extractor_lv2(features_lv1_flat).view(B, N, -1, H // 2, W // 2)
+        # Reference frame features
+        ref_feat_lv1 = curr_feat_lv1.view(B, N, -1, H, W)[:, self.center_frame_idx]            # (B, C, H, W)
+        ref_feat_lv2 = curr_feat_lv2.view(B, N, -1, H // 2, W // 2)[:, self.center_frame_idx]  # (B, C, H/2, W/2)
+        ref_feat_lv1_bc = ref_feat_lv1.repeat_interleave(N, dim=0)  # (B*N, C, H, W)
+        ref_feat_lv2_bc = ref_feat_lv2.repeat_interleave(N, dim=0)  # (B*N, C, H/2, W/2)
 
-        ref_feat_lv1 = features_lv1[:, self.center_frame_idx] # (B, C, H, W)
-        ref_feat_lv2 = features_lv2[:, self.center_frame_idx] # (B, C, H/2, W/2)
+        # The reference frame is intentionally NOT skipped:
+        # Though in previous iterations it was, routing it through the
+        # same pipeline as all others means it will look "identical" to them
+        # thus it will be weighted as an equal with temporal fusion
 
-        aligned_feats = []
+        # Lv2 Alignment  (coarse alignment, H/2 x W/2 -> feats are compressed)
+        concat_lv2 = torch.cat([curr_feat_lv2, ref_feat_lv2_bc], dim=1)
+        offset_feat_lv2 = self.offset_conv_lv2(concat_lv2) # (B, num_feat, H/2, W/2)
+        offset_mask_lv2 = self.offset_proj_lv2(offset_feat_lv2) # (B, padded_C, H/2, W/2)
 
-        for i in range(N):
-            # The reference frame is intentionally NOT skipped:
-            # Though in previous iterations it was, routing it through the
-            # same pipeline as all others means it will look "identical" to them
-            # thus it will be weighted as an equal with temporal fusion
+        aligned_lv2 = self.dcn_lv2(curr_feat_lv2, offset_mask_lv2) # (B, num_feat, H/2, W/2)
 
-            curr_feat_lv1 = features_lv1[:, i]   # (B, C, H, W)
-            curr_feat_lv2 = features_lv2[:, i]   # (B, C, H/2, W/2)
+        # Coarse to Fine propagation
+        # Usample the projected offset_mask tensor and apply offset_scaling to it
+        # offset masks are geometric "pixel-displacements" and not the features
+        # represented by offset_feat_lv. 
+        # Thus it is multiplied by 2 for delta x/y chans and 1 for mask/padding chans
+        up_offset_mask_lv2 = self.upsample(offset_mask_lv2) * self.offset_scale
 
-            # Lv2 Alignment  (coarse alignment, H/2 x W/2 -> feats are compressed)
-            concat_lv2 = torch.cat([curr_feat_lv2, ref_feat_lv2], dim=1)
-            offset_feat_lv2 = self.offset_conv_lv2(concat_lv2) # (B, num_feat, H/2, W/2)
-            offset_mask_lv2 = self.offset_proj_lv2(offset_feat_lv2) # (B, padded_C, H/2, W/2)
+        # Only upsample the features, thus no scaling is applied to these (feature-space)
+        up_offset_feat_lv2 = self.upsample(offset_feat_lv2) # (B, num_feat, H, W), NO ×2
 
-            aligned_lv2 = self.dcn_lv2(curr_feat_lv2, offset_mask_lv2) # (B, num_feat, H/2, W/2)
+        # Upsample coarse aligned features (post DCN)
+        up_aligned_lv2 = self.upsample(aligned_lv2) # (B, num_feat, H, W)
 
-            # Coarse to Fine propagation
-            # Usample the projected offset_mask tensor and apply offset_scaling to it
-            # offset masks are geometric "pixel-displacements" and not the features
-            # represented by offset_feat_lv. 
-            # Thus it is multiplied by 2 for delta x/y chans and 1 for mask/padding chans
-            up_offset_mask_lv2 = self.upsample(offset_mask_lv2) * self.offset_scale
+        # Lv1 Alignment  (fine alignment, H x W)
+        concat_lv1 = torch.cat([curr_feat_lv1, ref_feat_lv1_bc], dim=1)
+        offset_feat_lv1_base = self.offset_conv_lv1_1(concat_lv1) # (B, num_feat, H, W)
 
-            # Only upsample the features, thus no scaling is applied to these (feature-space)
-            up_offset_feat_lv2 = self.upsample(offset_feat_lv2) # (B, num_feat, H, W), NO ×2
+        # Residual offset: condition on both the fine-level prior and the
+        # upsampled coarse feature (which encodes where large-scale motion
+        # was already estimated).
+        offset_feat_lv1 = self.offset_conv_lv1_2(
+            torch.cat([offset_feat_lv1_base, up_offset_feat_lv2], dim=1)
+        )
+        offset_mask_lv1 = self.offset_proj_lv1(offset_feat_lv1)      # (B, padded_C, H, W)
 
-            # Upsample coarse aligned features (post DCN)
-            up_aligned_lv2 = self.upsample(aligned_lv2) # (B, num_feat, H, W)
+        # Now instead of adding the offset features, add the offset masks
+        offset_mask_lv1 = offset_mask_lv1 + up_offset_mask_lv2
 
-            # Lv1 Alignment  (fine alignment, H x W)
-            concat_lv1 = torch.cat([curr_feat_lv1, ref_feat_lv1], dim=1)
-            offset_feat_lv1_base = self.offset_conv_lv1_1(concat_lv1) # (B, num_feat, H, W)
+        aligned_lv1 = self.dcn_lv1(curr_feat_lv1, offset_mask_lv1) # (B, num_feat, H, W)
 
-            # Residual offset: condition on both the fine-level prior and the
-            # upsampled coarse feature (which encodes where large-scale motion
-            # was already estimated).
-            offset_feat_lv1 = self.offset_conv_lv1_2(
-                torch.cat([offset_feat_lv1_base, up_offset_feat_lv2], dim=1)
-            )
-            offset_mask_lv1 = self.offset_proj_lv1(offset_feat_lv1)      # (B, padded_C, H, W)
+        # Fuse fine-aligned features with upsampled coarse aligned features
+        aligned_lv1_fused = self.feat_fuse_lv1(
+            torch.cat([aligned_lv1, up_aligned_lv2], dim=1) # (B, num_feat, H, W)
+        )
 
-            # Now instead of adding the offset features, add the offset masks
-            offset_mask_lv1 = offset_mask_lv1 + up_offset_mask_lv2
+        # Cascading Refinement
+        concat_casc     = torch.cat([aligned_lv1_fused, ref_feat_lv1], dim=1)
+        casc_offset_feat = self.casc_offset_conv(concat_casc)
+        casc_offset_mask = self.casc_offset_proj(casc_offset_feat)
 
-            aligned_lv1 = self.dcn_lv1(curr_feat_lv1, offset_mask_lv1) # (B, num_feat, H, W)
+        final_aligned = self.casc_dcn(aligned_lv1_fused, casc_offset_mask)
 
-            # Fuse fine-aligned features with upsampled coarse aligned features
-            aligned_lv1_fused = self.feat_fuse_lv1(
-                torch.cat([aligned_lv1, up_aligned_lv2], dim=1) # (B, num_feat, H, W)
-            )
+        final_aligned = self.lrelu(final_aligned) # Mirror EVDR final activation
 
-            # Cascading Refinement
-            concat_casc     = torch.cat([aligned_lv1_fused, ref_feat_lv1], dim=1)
-            casc_offset_feat = self.casc_offset_conv(concat_casc)
-            casc_offset_mask = self.casc_offset_proj(casc_offset_feat)
-
-            final_aligned = self.casc_dcn(aligned_lv1_fused, casc_offset_mask)
-
-            final_aligned = self.lrelu(final_aligned) # Mirror EVDR final activation
-
-            aligned_feats.append(final_aligned)
-
-        return torch.stack(aligned_feats, dim=1), ref_feat_lv1   # (B, N, num_feat, H, W)
+        return final_aligned.view(B, N, -1, H, W), ref_feat_lv1

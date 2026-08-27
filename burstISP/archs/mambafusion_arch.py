@@ -6,7 +6,7 @@ import kornia
 import cv2
 from burstISP.utils.registry import ARCH_REGISTRY
 from burstISP.archs.mambairv2_arch import MambaIRv2
-from burstISP.archs.dcn_align_arch import BurstAlign
+from burstISP.archs.dcn_align_arch import BurstAlign, PreAlign
 from burstISP.archs.st_hat_fusion_arch import ST_HAT
 
 @ARCH_REGISTRY.register()
@@ -41,13 +41,11 @@ class MambaFusionNet(nn.Module):
         self.is_train = opt['is_train']
         self.is_global_skip = opt['global_skip']
 
-        # Long skip connection
-        if self.is_global_skip:
-            self.global_skip = GlobalSkipConnection(scale=self.opt['scale'])
-        #self.alpha_residual = nn.Parameter(torch.zeros(1)) - removed in favor of zero-init last conv in irv2
+        # Pre Alignment
+        self.pre_align = PreAlign(in_channels=4, num_feat=self.num_feat)
 
         # Alignment module
-        self.alignment = BurstAlign(num_feat=self.num_feat, num_frames=self.num_frames, offset_groups=self.opt['offset_groups'])
+        self.alignment = BurstAlign(in_channels=self.num_feat, num_feat=self.num_feat, num_frames=self.num_frames, offset_groups=self.opt['offset_groups'])
 
         # Fusion module
         self.fusion = ST_HAT(
@@ -65,11 +63,11 @@ class MambaFusionNet(nn.Module):
         # Restoration module
         self.restoration = MambaIRv2(
             img_size= self.opt['img_size'],
-            in_chans= self.num_feat,
+            in_chans= self.opt['embed_dim'],
             out_chans = 3, # For RGB image
             embed_dim=self.opt['embed_dim'],
             d_state=self.opt['d_state'],
-            upscale=self.opt["scale"],
+            upscale=self.opt["scale"] // 2,
             depths=self.opt['depths'],
             num_heads=self.opt['num_heads'],
             window_size=self.opt['window_size'],
@@ -92,58 +90,19 @@ class MambaFusionNet(nn.Module):
         x = torch.cat([x, torch.flip(x, [3])], 3)
         x = torch.cat([x, torch.flip(x, [4])], 4)[:, :, :, :h_ori + h_pad, :w_ori + w_pad]
 
-        center_idx = self.num_frames // 2
-        center_raw = x[:, center_idx, :, :, :].float()
-
         # Align features from burst frames
+        x_proj = self.pre_align(x)
         with torch.amp.autocast("cuda", enabled=False):
-            aligned_burst, ref_feats = self.alignment(x.float())  # Shape: [B, N, C, H, W]
+            aligned_burst, ref_feats = self.alignment(x_proj.float())  # Shape: [B, N, C, H, W]
 
-        # aligned_burst = aligned_burst.to(x.dtype)
-        # aligned_ref = aligned_burst[:, center_idx, :, :, :]
-
-        # Collapse burst dimension into batch dimension for restoration
+        # ST-HAT Fusion
         fused_input = self.fusion(aligned_burst)
 
-        # Restore high-quality image from fused features
-        deep_residual = self.restoration(fused_input, ref_feats)  # Shape: [B, C_out, H_out, W_out]
-
-        # Add long skip connection
-        if self.is_global_skip:
-            base_img = self.global_skip(center_raw)
-            output = base_img + deep_residual
-        else:
-            output = deep_residual
+        # Refinement and Upsampling with MambaIRv2
+        output = self.restoration(fused_input, fused_input)  # Shape: [B, C_out, H_out, W_out]
 
         output = output[..., :h_ori * self.opt['scale'], :w_ori * self.opt['scale']]
         return output
-    
-class GlobalSkipConnection(nn.Module):
-    """
-    Global skip connection baseline definition and application.
-
-    Performs non-learnable Malvar-He-Cutler demosaicing and bicubic upsampling to generate a strong
-    baseline. The model only has to learn the residual from here.
-    """
-    def __init__(self, scale):
-        super(GlobalSkipConnection, self).__init__()
-        self.scale = scale
-        self.rem_scale = self.scale // 2
-
-    def forward(self, x):
-        B, C, H, W = x.shape
-        device = x.device
-
-        # Unpack RGGB Image
-        bayer = F.pixel_shuffle(x, 2) # [B, 1, 2H, 2W]
-
-        # Demosaicing step
-        rgb = kornia.color.raw_to_rgb(bayer, kornia.color.CFA.BG)
-
-        # Upsampling
-        out = F.interpolate(rgb, scale_factor=self.rem_scale, mode='bicubic', align_corners=False)
-
-        return out.to(x.dtype)
     
 if __name__ == '__main__':
     print("--- Testing Full MambaFusionNet Architecture ---")
