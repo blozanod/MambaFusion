@@ -57,7 +57,8 @@ class MambaFusionNet(nn.Module):
             num_heads=self.opt['fusion_heads'],
             overlap_ratio=self.opt['fusion_overlap'],
             depth_stage1=self.opt['fusion_depth_s1'],
-            depth_stage3=self.opt['fusion_depth_s3']
+            depth_stage3=self.opt['fusion_depth_s3'],
+            out_feat=self.opt['embed_dim']
         )
 
         # Restoration module
@@ -108,10 +109,11 @@ if __name__ == '__main__':
     print("--- Testing Full MambaFusionNet Architecture ---")
     
     # 1. Config Dictionary (Extracted from config_newarch.yaml)
+    # Mirrors main/configs/MF_STHAT_L5_BayerSpace.yml
     opt = {
         'global_skip': False,
-        'num_frames': 5,
-        'img_size': 80,
+        'num_frames': 14,
+        'img_size': 96,
         'num_feat': 64,
         'offset_groups': 4,
         'fusion_ws': 8,
@@ -120,8 +122,8 @@ if __name__ == '__main__':
         'fusion_heads': 4,
         'fusion_overlap': 0.25,
         'fusion_depth_s1': 3,
-        'fusion_depth_s3': 3,
-        'embed_dim': 48,
+        'fusion_depth_s3': 1,
+        'embed_dim': 96,
         'd_state': 8,
         'scale': 8,
         'depths': [5, 5, 5, 5],
@@ -137,11 +139,11 @@ if __name__ == '__main__':
     }
 
     # 2. Dataset / Input parameters
-    B = 1        # Batch size per GPU
-    N = 5        # Number of frames
+    B = 2        # Batch size per GPU (SynBurst config uses 2)
+    N = 14       # Number of frames
     C_in = 4     # RAW packed RGGB Bayer channels
-    H = 48       # Image height
-    W = 48       # Image width
+    H = 48       # Packed height (PreAlign takes this to 96)
+    W = 48       # Packed width  (PreAlign takes this to 96)
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Running on: {device}")

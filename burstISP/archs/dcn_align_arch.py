@@ -208,7 +208,7 @@ class BurstAlign(nn.Module):
         )
 
         # Cascading Refinement
-        concat_casc     = torch.cat([aligned_lv1_fused, ref_feat_lv1], dim=1)
+        concat_casc     = torch.cat([aligned_lv1_fused, ref_feat_lv1_bc], dim=1)
         casc_offset_feat = self.casc_offset_conv(concat_casc)
         casc_offset_mask = self.casc_offset_proj(casc_offset_feat)
 

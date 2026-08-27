@@ -779,7 +779,8 @@ class ST_HAT(nn.Module):
                  num_heads=4,
                  overlap_ratio=0.25,
                  depth_stage1=3,
-                 depth_stage3=3):
+                 depth_stage3=3,
+                 out_feat=None):
         super(ST_HAT, self).__init__()
         self.num_frames = num_frames
         self.window_size = window_size
@@ -787,8 +788,12 @@ class ST_HAT(nn.Module):
         self.num_heads = num_heads
         self.overlap_ratio = overlap_ratio
 
+        # out_feat defaults to in_feat; set it to the restoration module's
+        # embed_dim to avoid a channel waist between fusion and restoration.
+        self.out_feat = out_feat if out_feat is not None else in_feat
+
         self.proj_in = nn.Conv2d(in_feat, num_feat, kernel_size=1)
-        self.proj_out = nn.Conv2d(num_feat, in_feat, kernel_size=1)
+        self.proj_out = nn.Conv2d(num_feat, self.out_feat, kernel_size=1)
 
         self.register_buffer('rpi_sa', self.calculate_rpi_sa())
         self.register_buffer('rpi_sa_3d', self.calculate_rpi_sa_3d())
