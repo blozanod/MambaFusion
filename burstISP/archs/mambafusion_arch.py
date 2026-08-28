@@ -94,7 +94,10 @@ class MambaFusionNet(nn.Module):
             resi_connection=self.opt['resi_connection'],
             use_checkpoint=False,
             control_net=self.is_global_skip,
-            upsample_feat=self.opt.get('upsample_feat', 64)
+            upsample_feat=self.opt.get('upsample_feat', 64),
+            # forward() gets (fused_input, ref_feats): x is embed_dim wide,
+            # the residual is BurstAlign's num_feat.
+            residual_chans=self.num_feat
         )
 
     def forward(self, x):

@@ -809,6 +809,7 @@ class MambaIRv2(nn.Module):
                  resi_connection='1conv',
                  control_net=False,
                  upsample_feat=64,
+                 residual_chans=None,
                  **kwargs):
         super().__init__()
         num_in_ch = in_chans
@@ -826,8 +827,12 @@ class MambaIRv2(nn.Module):
         self.upscale = upscale
         self.upsampler = upsampler
 
-        # residual projection
-        self.skip_proj = nn.Conv2d(in_chans, embed_dim, kernel_size=1)
+        # Residual projection. The residual argument to forward() is a separate
+        # tensor from x and need not share its width: MambaFusionNet passes the
+        # fused features as x (embed_dim) and BurstAlign's reference features as
+        # the residual (num_feat). Defaults to in_chans when they do match.
+        self.skip_proj = nn.Conv2d(residual_chans if residual_chans is not None else in_chans,
+                                   embed_dim, kernel_size=1)
 
         # ------------------------- 1, shallow feature extraction ------------------------- #
         self.conv_first = nn.Conv2d(num_in_ch, embed_dim, kernel_size=1, stride=1, padding=0)
