@@ -55,8 +55,9 @@ def attentive(E,S,W,H,R,T,KF,MR):
     ffn  = li(E,h) + dw(h,KF) + li(h,E)
     return 4*ln(E) + 2*E + li(E,3*E) + wattn(E,W,H) + assm + 2*ffn + R*S
 
-def mambairv2(IC,E,depths,heads,W,R,T,KF,MR,S,upscale,UF):
-    t = cv(IC,E,1)*2                              # skip_proj + conv_first
+def mambairv2(IC,E,depths,heads,W,R,T,KF,MR,S,upscale,UF,RC=None):
+    RC = IC if RC is None else RC
+    t = cv(IC,E,1) + cv(RC,E,1)                   # conv_first + skip_proj
     for d,H in zip(depths,heads):
         t += d*attentive(E,S,W,H,R,T,KF,MR) + cv(E,E,3)
     t += ln(E) + cv(E,E,3)                        # norm + conv_after_body
@@ -91,7 +92,7 @@ def from_config(path):
                 n['fusion_depth_s3'], E, n.get('fusion_st_ws'))
     mb = mambairv2(E, E, n['depths'], n['num_heads'], n['window_size'], n['inner_rank'],
                    n['num_tokens'], n['convffn_kernel_size'], n['mlp_ratio'], n['d_state'],
-                   n['scale'] // 2 if pa_on else n['scale'], n.get('upsample_feat', 64))
+                   n['scale'] // 2 if pa_on else n['scale'], n.get('upsample_feat', 64), F)
     tot = pa + al + fu + mb
     print(path)
     for name, v in [('PreAlign', pa), ('BurstAlign', al), ('ST-HAT', fu), ('MambaIRv2', mb)]:
