@@ -4,16 +4,18 @@
 #$ -m abe            # Send mail when job begins, ends and aborts
 #$ -pe smp 32        # Specify parallel environment and legal core size
 #$ -q gpu@@crc_a10           # Specify queue
+#$ -S /bin/bash      # This script uses bash syntax; do not inherit the login shell
 #$ -N MambaTraining
 #$ -l gpu_card=4
 #$ -cwd
 
 # Usage: qsub [-N <job_name>] main/mamba_job.sh <config.yml>
 #
-# The config path may be relative to the submission directory or absolute:
-# it is resolved with realpath before this script changes directory, so the
-# `cd` below cannot break it. Override -N per run so concurrent jobs are
-# distinguishable in qstat.
+# The config argument is accepted as an absolute path, a path relative to the
+# submission directory, a path relative to the repo root, or a bare filename
+# under main/configs/. Do not assume the job starts in the repo: -cwd is not
+# reliable here, so nothing below depends on the working directory. Override
+# -N per run so concurrent jobs are distinguishable in qstat.
 
 set -uo pipefail
 
@@ -25,9 +27,24 @@ if [ -z "${1:-}" ]; then
     exit 1
 fi
 
-CONFIG="$(realpath "$1")"
-if [ ! -f "$CONFIG" ]; then
-    echo "Error: config not found: $1 (resolved to $CONFIG)"
+# Resolve the config without depending on the job's working directory.
+CONFIG=""
+for candidate in "$1" "$PWD/$1" "$REPO/$1" "$REPO/main/configs/$1" "$REPO/main/configs/$1.yml"; do
+    if [ -f "$candidate" ]; then
+        CONFIG="$(cd "$(dirname "$candidate")" && pwd)/$(basename "$candidate")"
+        break
+    fi
+done
+
+if [ -z "$CONFIG" ]; then
+    echo "Error: config not found: $1"
+    echo "  Tried, in order:"
+    for candidate in "$1" "$PWD/$1" "$REPO/$1" "$REPO/main/configs/$1" "$REPO/main/configs/$1.yml"; do
+        echo "    $candidate"
+    done
+    echo "  Working directory: $PWD"
+    echo "  Available configs:"
+    ls -1 "$REPO/main/configs/" 2>/dev/null | sed 's/^/    /'
     exit 1
 fi
 
@@ -37,6 +54,7 @@ echo "======================================================================"
 echo "  Config    : $CONFIG"
 echo "  Run name  : ${RUN_NAME:-<unset>}"
 echo "  Host      : $(hostname)"
+echo "  Workdir   : $PWD"
 echo "  Job ID    : ${JOB_ID:-<none>}"
 echo "  Commit    : $(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 echo "  Started   : $(date)"
