@@ -120,99 +120,10 @@ class MambaFusionNet(nn.Module):
 
         output = output[..., :h_ori * self.opt['scale'], :w_ori * self.opt['scale']]
         return output
-    
-if __name__ == '__main__':
-    print("--- Testing Full MambaFusionNet Architecture ---")
-    
-    # 1. Config Dictionary (Extracted from config_newarch.yaml)
-    # Mirrors main/configs/MF_STHAT_L5_BayerSpace.yml
-    opt = {
-        'global_skip': False,
-        'pre_align': True,
-        'num_frames': 14,
-        'img_size': 48,
-        'num_feat': 64,
-        'offset_groups': 4,
-        'fusion_ws': 8,
-        'fusion_st_ws': 4,
-        'fusion_feat': 96,
-        'fusion_mlp_ratio': 4,
-        'fusion_heads': 4,
-        'fusion_overlap': 0.25,
-        'fusion_depth_s1': 3,
-        'fusion_depth_s3': 1,
-        'embed_dim': 96,
-        'upsample_feat': 64,
-        'd_state': 16,
-        'scale': 8,
-        'depths': [2, 2, 2, 2],
-        'num_heads': [4, 4, 4, 4],
-        'window_size': 16,
-        'inner_rank': 32,
-        'num_tokens': 64,
-        'convffn_kernel_size': 5,
-        'mlp_ratio': 2,
-        'upsampler': 'pixelshuffle',
-        'resi_connection': '1conv',
-        'is_train': True
-    }
 
-    # 2. Dataset / Input parameters
-    B = 2        # Batch size per GPU (SynBurst config uses 2)
-    N = 14       # Number of frames
-    C_in = 4     # RAW packed RGGB Bayer channels
-    H = 48       # Packed height (PreAlign takes this to 96)
-    W = 48       # Packed width  (PreAlign takes this to 96)
-    
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Running on: {device}")
-    
-    # 3. Initialize Model
-    try:
-        model = MambaFusionNet(**opt).to(device)
-        print("✅ MambaFusionNet successfully initialized.")
-    except Exception as e:
-        print(f"❌ Initialization failed: {e}")
-        exit()
-
-    # 4. Model Size Calculation
-    total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"Total Parameters: {total_params / 1e6:.3f}M")
-    print(f"Trainable Parameters: {trainable_params / 1e6:.3f}M")
-
-    # 5. Forward Pass Test
-    # Using 4-channel input (RGGB RAW) which BurstAlign usually projects internally
-    _input = torch.randn(B, N, C_in, H, W, device=device, requires_grad=True)
-    
-    try:
-        output = model(_input)
-        
-        # Expected output shape: [B, 3, H * scale, W * scale]
-        expected_shape = (B, 3, H * opt['scale'], W * opt['scale'])
-        
-        if output.shape == expected_shape:
-            print(f"✅ Forward pass successful. Output shape: {output.shape}")
-        else:
-            print(f"⚠️ Forward pass successful, but shape is {output.shape} (Expected {expected_shape})")
-        
-    except Exception as e:
-        print(f"❌ Forward pass failed: {e}")
-        exit()
-
-    # 6. Backward Pass Test
-    scaler = torch.amp.GradScaler('cuda')
-    
-    try:
-        # Wrap the forward pass in AMP to simulate actual training memory footprints
-        with torch.amp.autocast('cuda'):
-            output = model(_input)
-            
-        loss = output.sum()
-        
-        # Scale the loss and call backward
-        scaler.scale(loss).backward()
-        
-        print("✅ Backward pass successful. Gradients computed.")
-    except Exception as e:
-        print(f"❌ Backward pass failed: {e}")
+# NOTE: this module cannot be executed directly (`python -m burstISP.archs.
+# mambafusion_arch` or `python burstISP/archs/mambafusion_arch.py`). The archs
+# package __init__ auto-imports every *_arch.py, so the class is registered on
+# import and a second execution as __main__ trips the ARCH_REGISTRY duplicate
+# assert. For a build / forward / backward / memory check on a real config, use
+# `python analysis/shape_check.py <config.yml>`, which imports instead.
