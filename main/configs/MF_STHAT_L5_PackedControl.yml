@@ -1,33 +1,9 @@
-# MF_STHAT_L5_BayerSpace — Bayer-domain restructure, 35k smoke test.
+# MF_STHAT_L5_PackedControl — packed-RGGB control for MF_STHAT_L5_BayerSpace.
 #
-# Change under test vs. MF_STHAT_L3_SynBase:
-#   1. PreAlign conv head + PixelShuffle x2 -> alignment, fusion and restoration
-#      all run on the Bayer grid (96x96) instead of packed RGGB (48x48).
-#      network_g.scale stays 8 (GT is 8x the packed LR); the restoration module
-#      internally upsamples by scale // 2 = 4 because PreAlign already did x2.
-#   2. ST-HAT stage 3 reduced 3 -> 1 (redundant with the MambaIRv2 trunk);
-#      stage 1 stays at 3 — the fusion module is the contribution and is not
-#      where capacity should be cut.
-#   3. embed_dim 48 -> 96 (== fusion_feat, so ST-HAT proj_out emits it directly
-#      and there is no channel waist into the restoration module).
-#   4. MambaIRv2 depths [5,5,5,5] -> [2,2,2,2]. It is a refinement trunk after
-#      the burst dimension has already collapsed, not the backbone, and
-#      ST-HAT stage 3 already refines. Depth 2 per ASSB is also the minimum
-#      that keeps BasicBlock's shift alternation (0, window_size // 2) intact.
-#   5. d_state 8 -> 16. The selective scan is ~5% of an AttentiveLayer, so this
-#      buys SSM state capacity for 58k parameters — the cheapest capacity in
-#      the model.
-#   6. upsample_feat 64 (not 128). At 96x96 the pre-upsample tensor is already
-#      96*96*64 = 590k values against a 384*384*3 = 442k output (ratio 1.33,
-#      over-complete). The wider tail was compensating for the starved 48x48
-#      budget and is redundant in Bayer space.
-#
-#   7. SpatioTemporalBlock window 8 -> 4 (fusion_st_ws), split out from the
-#      window used by the spatial, fusion and refinement blocks. Cuts the
-#      dominant attention term 4x and probes residual misalignment.
-#
-# Total: ~5.02M, against 5.089M for L3. Split is PreAlign 3% / BurstAlign 17% /
-# ST-HAT 34% / MambaIRv2 46%.
+# Identical to MF_STHAT_L5_BayerSpace except pre_align, which is false here:
+# alignment, fusion and restoration all run on the packed RGGB grid (48x48)
+# and the restoration module upsamples by the full x8. Every other knob is
+# held fixed, so the delta between the two runs isolates the domain change.
 #
 # Schedule is the fixed 35k smoke-test recipe: cosine 1e-4 -> 1e-6, warmup 2k.
 # Effective batch is held at 32 (2 per GPU x 4 GPUs x 4 accumulation steps) so
@@ -39,7 +15,7 @@
 # MF_STHAT_L5_PackedControl.yml. That is the one-variable ablation for the
 # domain change; it is NOT a re-run of L3 (which also differed in depths,
 # embed_dim and the reference residual).
-name: MF_STHAT_L5_BayerSpace
+name: MF_STHAT_L5_PackedControl
 model_type: MambaFusionModel
 scale: 8
 num_gpu: 4
@@ -79,9 +55,9 @@ network_g:
   type: MambaFusionNet
   # General Config
   global_skip: false
-  pre_align: true  # <- the domain switch; false reproduces the packed-RGGB pipeline
+  pre_align: false  # <- the domain switch; the ONLY key that differs from L5_BayerSpace
   num_frames: 14
-  img_size: 48  # packed LR crop; PreAlign doubles it to 96 internally
+  img_size: 48  # packed LR crop; used as-is with pre_align off
   num_feat: 64
   # Alignment Specific Config
   offset_groups: 4
@@ -89,7 +65,7 @@ network_g:
   fusion_ws: 8
   # SpatioTemporalBlock only. Its attention is B*H^2*heads*N^2*ws^2 — linear
   # in ws^2 and ~14x a SpatialBlock — so 8 -> 4 cuts the dominant memory term
-  # 4x (96 -> 24 windows). It is also the only block doing cross-frame spatial
+  # 4x (48 -> 12 windows). It is also the only block doing cross-frame spatial
   # search, so this size measures how much residual misalignment fusion is
   # absorbing. Omit the key to fall back to fusion_ws.
   fusion_st_ws: 4
@@ -103,7 +79,7 @@ network_g:
   embed_dim: 96
   upsample_feat: 64  # width of conv_before_upsample -> Upsample -> conv_last
   d_state: 16
-  scale: 8  # packed-LR -> GT ratio; restoration upsamples by scale // 2
+  scale: 8  # packed-LR -> GT ratio; restoration upsamples by the full x8
   depths: [2, 2, 2, 2]
   num_heads: [4, 4, 4, 4]
   window_size: 16

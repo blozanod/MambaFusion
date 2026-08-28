@@ -13,10 +13,13 @@ class PreAlign(nn.Module):
     """
     def __init__(self, in_channels=4, num_feat=64):
         super(PreAlign, self).__init__()
+        # Expand to 4*num_feat only in the last conv, immediately before the
+        # shuffle. Running both convs at 4*num_feat costs 0.60M for a shallow
+        # input projection; this is 0.15M for the same output shape.
         self.proj = nn.Sequential(
-            nn.Conv2d(in_channels, num_feat * 4, kernel_size=3, padding=1, stride=1),
+            nn.Conv2d(in_channels, num_feat, kernel_size=3, padding=1, stride=1),
             nn.LeakyReLU(0.1, inplace=True),
-            nn.Conv2d(num_feat * 4, num_feat * 4, kernel_size=3, padding=1, stride=1),
+            nn.Conv2d(num_feat, num_feat * 4, kernel_size=3, padding=1, stride=1),
             nn.LeakyReLU(0.1, inplace=True),
         )
         self.pixel_shuffle = nn.PixelShuffle(2)
@@ -208,7 +211,7 @@ class BurstAlign(nn.Module):
         )
 
         # Cascading Refinement
-        concat_casc     = torch.cat([aligned_lv1_fused, ref_feat_lv1], dim=1)
+        concat_casc     = torch.cat([aligned_lv1_fused, ref_feat_lv1_bc], dim=1)
         casc_offset_feat = self.casc_offset_conv(concat_casc)
         casc_offset_mask = self.casc_offset_proj(casc_offset_feat)
 

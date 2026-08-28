@@ -779,20 +779,36 @@ class ST_HAT(nn.Module):
                  num_heads=4,
                  overlap_ratio=0.25,
                  depth_stage1=3,
-                 depth_stage3=3):
+                 depth_stage3=3,
+                 out_feat=None,
+                 st_window_size=None):
         super(ST_HAT, self).__init__()
         self.num_frames = num_frames
         self.window_size = window_size
+        # SpatioTemporalBlock gets its own spatial window. Its attention cost is
+        # B * H^2 * heads * N^2 * ws^2, so it dominates stage 1 (~14x a
+        # SpatialBlock) and shrinking it is the cheapest large memory saving.
+        # It is also the only block doing cross-frame *spatial* search, so its
+        # size is a direct probe of how much residual misalignment fusion is
+        # absorbing. Defaults to window_size.
+        self.st_window_size = st_window_size if st_window_size is not None else window_size
         self.num_feat = num_feat
         self.num_heads = num_heads
         self.overlap_ratio = overlap_ratio
 
-        self.proj_in = nn.Conv2d(in_feat, num_feat, kernel_size=1)
-        self.proj_out = nn.Conv2d(num_feat, in_feat, kernel_size=1)
+        # out_feat defaults to in_feat; set it to the restoration module's
+        # embed_dim to avoid a channel waist between fusion and restoration.
+        self.out_feat = out_feat if out_feat is not None else in_feat
 
-        self.register_buffer('rpi_sa', self.calculate_rpi_sa())
-        self.register_buffer('rpi_sa_3d', self.calculate_rpi_sa_3d())
-        self.register_buffer('rpi_sa_oca', self.calculate_rpi_oca())
+        self.proj_in = nn.Conv2d(in_feat, num_feat, kernel_size=1)
+        self.proj_out = nn.Conv2d(num_feat, self.out_feat, kernel_size=1)
+
+        # Deterministic functions of the config, never trained: non-persistent so
+        # they stay out of the checkpoint (rpi_sa_3d alone is ~6MB at ws=8, N=14).
+        self.register_buffer('rpi_sa', self.calculate_rpi_sa(), persistent=False)
+        self.register_buffer('rpi_sa_3d', self.calculate_rpi_sa_3d(window_size), persistent=False)
+        self.register_buffer('rpi_st_3d', self.calculate_rpi_sa_3d(self.st_window_size), persistent=False)
+        self.register_buffer('rpi_sa_oca', self.calculate_rpi_oca(), persistent=False)
 
         self.stage1 = nn.ModuleList([
             nn.ModuleDict({
@@ -807,7 +823,7 @@ class ST_HAT(nn.Module):
                             num_heads=num_heads,
                             mlp_ratio=mlp_ratio),
                 'spatiotemporal': SpatioTemporalBlock(
-                            window_size=window_size,
+                            window_size=self.st_window_size,
                             num_frames=num_frames,
                             num_feat=num_feat,
                             num_heads=num_heads,
@@ -855,7 +871,7 @@ class ST_HAT(nn.Module):
         for blocks in self.stage1:
             x_s1 = blocks['spatial'](x_s1, self.rpi_sa)
             x_s1 = blocks['temporal'](x_s1)
-            x_s1 = blocks['spatiotemporal'](x_s1, self.rpi_sa_3d)
+            x_s1 = blocks['spatiotemporal'](x_s1, self.rpi_st_3d)
 
         # ---- Stage 2: Dimension Collapse ----
         x_s2b1 = self.fusion_block(x_s1, self.rpi_sa_3d)
@@ -889,19 +905,19 @@ class ST_HAT(nn.Module):
         return relative_position_index
     
     # For 3d window attention
-    def calculate_rpi_sa_3d(self):
+    def calculate_rpi_sa_3d(self, window_size):
         coords_t = torch.arange(self.num_frames)
-        coords_h = torch.arange(self.window_size)
-        coords_w = torch.arange(self.window_size)
+        coords_h = torch.arange(window_size)
+        coords_w = torch.arange(window_size)
         coords = torch.stack(torch.meshgrid([coords_t, coords_h, coords_w], indexing='ij'))  # 3, N, Wh, Ww
         coords_flatten = torch.flatten(coords, 1)  # 3, N*Wh*Ww
         relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # 3, N*Wh*Ww, N*Wh*Ww
         relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # N*Wh*Ww, N*Wh*Ww, 3
         relative_coords[:, :, 0] += self.num_frames - 1 # shift to start from 0
-        relative_coords[:, :, 1] += self.window_size - 1
-        relative_coords[:, :, 2] += self.window_size - 1
-        relative_coords[:, :, 0] *= (2 * self.window_size - 1) * (2 * self.window_size - 1) # scale N by Wh*Ww
-        relative_coords[:, :, 1] *= (2 * self.window_size - 1) # scale Wh by Ww
+        relative_coords[:, :, 1] += window_size - 1
+        relative_coords[:, :, 2] += window_size - 1
+        relative_coords[:, :, 0] *= (2 * window_size - 1) * (2 * window_size - 1) # scale N by Wh*Ww
+        relative_coords[:, :, 1] *= (2 * window_size - 1) # scale Wh by Ww
         relative_position_index = relative_coords.sum(-1)  # N*Wh*Ww, N*Wh*Ww
         return relative_position_index
     
