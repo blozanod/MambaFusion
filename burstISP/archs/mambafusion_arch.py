@@ -41,11 +41,24 @@ class MambaFusionNet(nn.Module):
         self.is_train = opt['is_train']
         self.is_global_skip = opt['global_skip']
 
-        # Pre Alignment
-        self.pre_align = PreAlign(in_channels=4, num_feat=self.num_feat)
+        # Pre Alignment: project packed RGGB into feature space and PixelShuffle
+        # x2 so that alignment, fusion and restoration all run on the Bayer grid.
+        # When disabled the network keeps the original packed-RGGB pipeline, so a
+        # single config key switches between the two domains for ablation.
+        self.use_pre_align = opt.get('pre_align', False)
+
+        if self.use_pre_align:
+            self.pre_align = PreAlign(in_channels=4, num_feat=self.num_feat)
+            align_in_ch = self.num_feat        # PreAlign already projected to num_feat
+            restoration_scale = self.opt['scale'] // 2   # PreAlign supplied the other x2
+            restoration_img_size = self.opt['img_size'] * 2
+        else:
+            align_in_ch = 4                    # raw packed RGGB
+            restoration_scale = self.opt['scale']
+            restoration_img_size = self.opt['img_size']
 
         # Alignment module
-        self.alignment = BurstAlign(in_channels=self.num_feat, num_feat=self.num_feat, num_frames=self.num_frames, offset_groups=self.opt['offset_groups'])
+        self.alignment = BurstAlign(in_channels=align_in_ch, num_feat=self.num_feat, num_frames=self.num_frames, offset_groups=self.opt['offset_groups'])
 
         # Fusion module
         self.fusion = ST_HAT(
@@ -63,12 +76,12 @@ class MambaFusionNet(nn.Module):
 
         # Restoration module
         self.restoration = MambaIRv2(
-            img_size= self.opt['img_size'],
+            img_size=restoration_img_size,
             in_chans= self.opt['embed_dim'],
             out_chans = 3, # For RGB image
             embed_dim=self.opt['embed_dim'],
             d_state=self.opt['d_state'],
-            upscale=self.opt["scale"] // 2,
+            upscale=restoration_scale,
             depths=self.opt['depths'],
             num_heads=self.opt['num_heads'],
             window_size=self.opt['window_size'],
@@ -79,7 +92,8 @@ class MambaFusionNet(nn.Module):
             upsampler=self.opt['upsampler'],
             resi_connection=self.opt['resi_connection'],
             use_checkpoint=False,
-            control_net=self.is_global_skip
+            control_net=self.is_global_skip,
+            upsample_feat=self.opt.get('upsample_feat', 64)
         )
 
     def forward(self, x):
@@ -92,15 +106,16 @@ class MambaFusionNet(nn.Module):
         x = torch.cat([x, torch.flip(x, [4])], 4)[:, :, :, :h_ori + h_pad, :w_ori + w_pad]
 
         # Align features from burst frames
-        x_proj = self.pre_align(x)
+        x_align = self.pre_align(x) if self.use_pre_align else x
         with torch.amp.autocast("cuda", enabled=False):
-            aligned_burst, ref_feats = self.alignment(x_proj.float())  # Shape: [B, N, C, H, W]
+            aligned_burst, ref_feats = self.alignment(x_align.float())  # Shape: [B, N, C, H, W]
 
         # ST-HAT Fusion
         fused_input = self.fusion(aligned_burst)
 
-        # Refinement and Upsampling with MambaIRv2
-        output = self.restoration(fused_input, fused_input)  # Shape: [B, C_out, H_out, W_out]
+        # Refinement and Upsampling with MambaIRv2. The residual is the aligned
+        # reference features, injected through a zero-init skip_proj (PLAN.md L1).
+        output = self.restoration(fused_input, ref_feats)  # Shape: [B, C_out, H_out, W_out]
 
         output = output[..., :h_ori * self.opt['scale'], :w_ori * self.opt['scale']]
         return output
@@ -112,8 +127,9 @@ if __name__ == '__main__':
     # Mirrors main/configs/MF_STHAT_L5_BayerSpace.yml
     opt = {
         'global_skip': False,
+        'pre_align': True,
         'num_frames': 14,
-        'img_size': 96,
+        'img_size': 48,
         'num_feat': 64,
         'offset_groups': 4,
         'fusion_ws': 8,
@@ -121,9 +137,10 @@ if __name__ == '__main__':
         'fusion_mlp_ratio': 4,
         'fusion_heads': 4,
         'fusion_overlap': 0.25,
-        'fusion_depth_s1': 3,
+        'fusion_depth_s1': 2,
         'fusion_depth_s3': 1,
         'embed_dim': 96,
+        'upsample_feat': 128,
         'd_state': 8,
         'scale': 8,
         'depths': [5, 5, 5, 5],

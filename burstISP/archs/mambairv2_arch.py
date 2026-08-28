@@ -808,11 +808,15 @@ class MambaIRv2(nn.Module):
                  upsampler='',
                  resi_connection='1conv',
                  control_net=False,
+                 upsample_feat=64,
                  **kwargs):
         super().__init__()
         num_in_ch = in_chans
         num_out_ch = out_chans
-        num_feat = 128
+        # Width of the reconstruction tail (conv_before_upsample -> Upsample ->
+        # conv_last). Was a hardcoded 64; exposed because it caps how much
+        # detail the upsampler can carry regardless of embed_dim.
+        num_feat = upsample_feat
         self.img_range = img_range
         if in_chans == 3:
             rgb_mean = (0.4488, 0.4371, 0.4040)
