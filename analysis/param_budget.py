@@ -40,9 +40,10 @@ def hab(D,ws,H,M):
     cab = cv(D,D//3,3)+cv(D//3,D,3)+cv(D,D//30,1)+cv(D//30,D,1)
     return 2*ln(D) + li(D,3*D) + wattn(D,ws,H) + cab + li(D,M*D)+li(M*D,D)
 
-def st_hat(N,ws,I,D,M,H,OR,s1,s3,O):
+def st_hat(N,ws,I,D,M,H,OR,s1,s3,O,st_ws=None):
+    st_ws = ws if st_ws is None else st_ws
     t = cv(I,D,1)+cv(D,O,1)+cv(D,D,1)
-    t += s1*(spatial(D,ws,H,M)+temporal(D,H,M,N)+st3d(D,ws,H,M,N))
+    t += s1*(spatial(D,ws,H,M)+temporal(D,H,M,N)+st3d(D,st_ws,H,M,N))
     t += fusion_blk(D,ws,H,M,N) + spatial(D,ws,H,M)
     t += s3*(2*ocab(D,ws,OR,H,M)+hab(D,ws,H,M))
     return t
@@ -87,7 +88,7 @@ def from_config(path):
     al = burst_align(F if pa_on else 4, F, n['offset_groups'])
     fu = st_hat(n['num_frames'], n['fusion_ws'], F, n['fusion_feat'], n['fusion_mlp_ratio'],
                 n['fusion_heads'], n['fusion_overlap'], n['fusion_depth_s1'],
-                n['fusion_depth_s3'], E)
+                n['fusion_depth_s3'], E, n.get('fusion_st_ws'))
     mb = mambairv2(E, E, n['depths'], n['num_heads'], n['window_size'], n['inner_rank'],
                    n['num_tokens'], n['convffn_kernel_size'], n['mlp_ratio'], n['d_state'],
                    n['scale'] // 2 if pa_on else n['scale'], n.get('upsample_feat', 64))

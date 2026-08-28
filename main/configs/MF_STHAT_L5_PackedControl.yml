@@ -63,6 +63,12 @@ network_g:
   offset_groups: 4
   # Fusion Specific Config
   fusion_ws: 8
+  # SpatioTemporalBlock only. Its attention is B*H^2*heads*N^2*ws^2 — linear
+  # in ws^2 and ~14x a SpatialBlock — so 8 -> 4 cuts the dominant memory term
+  # 4x (48 -> 12 windows). It is also the only block doing cross-frame spatial
+  # search, so this size measures how much residual misalignment fusion is
+  # absorbing. Omit the key to fall back to fusion_ws.
+  fusion_st_ws: 4
   fusion_feat: 96
   fusion_mlp_ratio: 4
   fusion_heads: 4

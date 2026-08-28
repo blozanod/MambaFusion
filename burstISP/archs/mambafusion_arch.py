@@ -71,7 +71,8 @@ class MambaFusionNet(nn.Module):
             overlap_ratio=self.opt['fusion_overlap'],
             depth_stage1=self.opt['fusion_depth_s1'],
             depth_stage3=self.opt['fusion_depth_s3'],
-            out_feat=self.opt['embed_dim']
+            out_feat=self.opt['embed_dim'],
+            st_window_size=self.opt.get('fusion_st_ws', self.opt['fusion_ws'])
         )
 
         # Restoration module
@@ -133,6 +134,7 @@ if __name__ == '__main__':
         'num_feat': 64,
         'offset_groups': 4,
         'fusion_ws': 8,
+        'fusion_st_ws': 4,
         'fusion_feat': 96,
         'fusion_mlp_ratio': 4,
         'fusion_heads': 4,

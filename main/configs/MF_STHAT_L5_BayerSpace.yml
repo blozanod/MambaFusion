@@ -22,8 +22,12 @@
 #      over-complete). The wider tail was compensating for the starved 48x48
 #      budget and is redundant in Bayer space.
 #
-# Total: ~5.08M, against 5.089M for L3. Split is PreAlign 3% / BurstAlign 17% /
-# ST-HAT 35% / MambaIRv2 45%.
+#   7. SpatioTemporalBlock window 8 -> 4 (fusion_st_ws), split out from the
+#      window used by the spatial, fusion and refinement blocks. Cuts the
+#      dominant attention term 4x and probes residual misalignment.
+#
+# Total: ~5.02M, against 5.089M for L3. Split is PreAlign 3% / BurstAlign 17% /
+# ST-HAT 34% / MambaIRv2 46%.
 #
 # Schedule is the fixed 35k smoke-test recipe: cosine 1e-4 -> 1e-6, warmup 2k.
 # Effective batch is held at 32 (2 per GPU x 4 GPUs x 4 accumulation steps) so
@@ -83,6 +87,12 @@ network_g:
   offset_groups: 4
   # Fusion Specific Config
   fusion_ws: 8
+  # SpatioTemporalBlock only. Its attention is B*H^2*heads*N^2*ws^2 — linear
+  # in ws^2 and ~14x a SpatialBlock — so 8 -> 4 cuts the dominant memory term
+  # 4x (96 -> 24 windows). It is also the only block doing cross-frame spatial
+  # search, so this size measures how much residual misalignment fusion is
+  # absorbing. Omit the key to fall back to fusion_ws.
+  fusion_st_ws: 4
   fusion_feat: 96
   fusion_mlp_ratio: 4
   fusion_heads: 4
