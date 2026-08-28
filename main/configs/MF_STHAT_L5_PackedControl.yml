@@ -1,18 +1,20 @@
 # MF_STHAT_L5_PackedControl — packed-RGGB control for MF_STHAT_L5_BayerSpace.
 #
-# Identical to MF_STHAT_L5_BayerSpace in every respect except pre_align, which
-# is false here: alignment, fusion and restoration all run on the packed RGGB
-# grid (48x48) and the restoration module upsamples by the full x8. Every other
-# knob — widths, depths, schedule, effective batch — is held fixed, so the delta
-# between these two runs isolates the packed-vs-Bayer domain change and nothing
-# else.
+# Identical to MF_STHAT_L5_BayerSpace except pre_align, which is false here:
+# alignment, fusion and restoration all run on the packed RGGB grid (48x48)
+# and the restoration module upsamples by the full x8. Every other knob is
+# held fixed, so the delta between the two runs isolates the domain change.
 #
 # Schedule is the fixed 35k smoke-test recipe: cosine 1e-4 -> 1e-6, warmup 2k.
 # Effective batch is held at 32 (2 per GPU x 4 GPUs x 4 accumulation steps) so
 # that 35k iterations here means the same optimizer steps AND the same number of
 # sample presentations as the L3 reference at 35k. Do not change the effective
 # batch without re-baselining: it is what makes the comparison valid.
-
+#
+# The packed-domain control is the same file with pre_align: false — see
+# MF_STHAT_L5_PackedControl.yml. That is the one-variable ablation for the
+# domain change; it is NOT a re-run of L3 (which also differed in depths,
+# embed_dim and the reference residual).
 name: MF_STHAT_L5_PackedControl
 model_type: MambaFusionModel
 scale: 8
@@ -30,9 +32,10 @@ datasets:
     num_frames: 14
     phase: train
     scale: 8
-    # Held at 2 to match MF_STHAT_L5_BayerSpace exactly. This config runs at
-    # 48x48 so it would fit a larger batch, but changing it would change the
-    # effective batch and break the comparison.
+    # 2 (not 4) because the fusion stage now runs at 96x96: each stage-1
+    # SpatioTemporalBlock holds a B x 144 windows x 4 heads x 896^2 attention
+    # matrix, and there are 3 of them. If this OOMs, go to 1 and raise
+    # accumulation_steps to 8 — that keeps the effective batch at 32.
     batch_size_per_gpu: 2
     num_worker_per_gpu: 6
     dataset_enlarge_ratio: 1
@@ -64,14 +67,14 @@ network_g:
   fusion_mlp_ratio: 4
   fusion_heads: 4
   fusion_overlap: 0.25
-  fusion_depth_s1: 2
+  fusion_depth_s1: 3
   fusion_depth_s3: 1
   # MambaIRv2 Specific Config
   embed_dim: 96
-  upsample_feat: 128  # width of conv_before_upsample -> Upsample -> conv_last
-  d_state: 8
+  upsample_feat: 64  # width of conv_before_upsample -> Upsample -> conv_last
+  d_state: 16
   scale: 8  # packed-LR -> GT ratio; restoration upsamples by the full x8
-  depths: [5, 5, 5, 5]
+  depths: [2, 2, 2, 2]
   num_heads: [4, 4, 4, 4]
   window_size: 16
   inner_rank: 32

@@ -5,12 +5,25 @@
 #      all run on the Bayer grid (96x96) instead of packed RGGB (48x48).
 #      network_g.scale stays 8 (GT is 8x the packed LR); the restoration module
 #      internally upsamples by scale // 2 = 4 because PreAlign already did x2.
-#   2. ST-HAT stage 3 reduced 3 -> 1 (redundant with the MambaIRv2 trunk).
-#   3. embed_dim 48 -> 96, upsample_feat 64 -> 128 (reconstruction tail width),
-#      and ST-HAT proj_out now emits embed_dim directly (no 96->64->96 waist).
-#   4. ST-HAT stage 1 reduced 3 -> 2. Stage 1 is the only stage that processes
-#      all N frames, so it is ~84% of ST-HAT's compute; this is what pays for
-#      the 4x token count at 96x96.
+#   2. ST-HAT stage 3 reduced 3 -> 1 (redundant with the MambaIRv2 trunk);
+#      stage 1 stays at 3 — the fusion module is the contribution and is not
+#      where capacity should be cut.
+#   3. embed_dim 48 -> 96 (== fusion_feat, so ST-HAT proj_out emits it directly
+#      and there is no channel waist into the restoration module).
+#   4. MambaIRv2 depths [5,5,5,5] -> [2,2,2,2]. It is a refinement trunk after
+#      the burst dimension has already collapsed, not the backbone, and
+#      ST-HAT stage 3 already refines. Depth 2 per ASSB is also the minimum
+#      that keeps BasicBlock's shift alternation (0, window_size // 2) intact.
+#   5. d_state 8 -> 16. The selective scan is ~5% of an AttentiveLayer, so this
+#      buys SSM state capacity for 58k parameters — the cheapest capacity in
+#      the model.
+#   6. upsample_feat 64 (not 128). At 96x96 the pre-upsample tensor is already
+#      96*96*64 = 590k values against a 384*384*3 = 442k output (ratio 1.33,
+#      over-complete). The wider tail was compensating for the starved 48x48
+#      budget and is redundant in Bayer space.
+#
+# Total: ~5.08M, against 5.089M for L3. Split is PreAlign 3% / BurstAlign 17% /
+# ST-HAT 35% / MambaIRv2 45%.
 #
 # Schedule is the fixed 35k smoke-test recipe: cosine 1e-4 -> 1e-6, warmup 2k.
 # Effective batch is held at 32 (2 per GPU x 4 GPUs x 4 accumulation steps) so
@@ -39,10 +52,10 @@ datasets:
     num_frames: 14
     phase: train
     scale: 8
-    # 2 (not 4) because the fusion stage now runs at 96x96: the stage-1
-    # SpatioTemporalBlock attention matrix is B x 144 windows x 4 heads x 896^2.
-    # If this still OOMs, go to 1 and raise accumulation_steps to 8 — that keeps
-    # the effective batch at 32.
+    # 2 (not 4) because the fusion stage now runs at 96x96: each stage-1
+    # SpatioTemporalBlock holds a B x 144 windows x 4 heads x 896^2 attention
+    # matrix, and there are 3 of them. If this OOMs, go to 1 and raise
+    # accumulation_steps to 8 — that keeps the effective batch at 32.
     batch_size_per_gpu: 2
     num_worker_per_gpu: 6
     dataset_enlarge_ratio: 1
@@ -74,14 +87,14 @@ network_g:
   fusion_mlp_ratio: 4
   fusion_heads: 4
   fusion_overlap: 0.25
-  fusion_depth_s1: 2
+  fusion_depth_s1: 3
   fusion_depth_s3: 1
   # MambaIRv2 Specific Config
   embed_dim: 96
-  upsample_feat: 128  # width of conv_before_upsample -> Upsample -> conv_last
-  d_state: 8
+  upsample_feat: 64  # width of conv_before_upsample -> Upsample -> conv_last
+  d_state: 16
   scale: 8  # packed-LR -> GT ratio; restoration upsamples by scale // 2
-  depths: [5, 5, 5, 5]
+  depths: [2, 2, 2, 2]
   num_heads: [4, 4, 4, 4]
   window_size: 16
   inner_rank: 32
