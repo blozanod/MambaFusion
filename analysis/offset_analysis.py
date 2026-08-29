@@ -24,9 +24,10 @@ Run with:
     torchrun --nproc_per_node=4 analysis/offset_analysis.py \\
         --models_dir /path/to/experiments/STHAT_GW/models \\
         [--config      main/config_newarch.yml] \\
-        [--data_root   /path/to/RealBSR_RAW_testpatch] \\
+        [--dataset     realbsr|synburst] \\
+        [--data_root   /path/to/test/set] \\
         [--seed        42] \\
-        [--num_frames  5] \\
+        [--num_frames  N]   # defaults to config network_g.num_frames \\
         [--log_dir     analysis/outputs/ablation_logs]
 """
 
@@ -50,8 +51,10 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # sibling: burst_data
 
 from burstISP.archs.mambafusion_arch import MambaFusionNet
+from burst_data import build_lq_source, gt_px_per_align_px, DEFAULT_ROOTS
 
 
 # ---------------------------------------------------------------------------
@@ -70,39 +73,6 @@ def setup_logger(log_path, rank):
         logger.addHandler(fh)
         logger.addHandler(ch)
     return logger
-
-
-# ---------------------------------------------------------------------------
-# Data loading (LQ only — GT not needed for offset measurement)
-# ---------------------------------------------------------------------------
-
-def load_lq(burst_dir, lq_indices):
-    """Return stacked LQ frames as FloatTensor [N, 4, H, W] in [0, 1]."""
-    pkl_file = glob.glob(os.path.join(burst_dir, '*.pkl'))[0]
-    with open(pkl_file, 'rb') as f:
-        meta = pickle.load(f)
-
-    subtract_bl = not meta.get('black_level_subtracted', False)
-    lq_paths    = sorted(glob.glob(os.path.join(burst_dir, '*_x1_*.png')))
-
-    frames = []
-    for idx in lq_indices:
-        img   = cv2.imread(lq_paths[idx], cv2.IMREAD_UNCHANGED)
-        frame = torch.from_numpy(img.astype(np.float32)).permute(2, 0, 1)
-        if subtract_bl:
-            frame = frame - 512.0
-        frame = frame / 16383.0
-        frames.append(frame)
-
-    return torch.stack(frames, dim=0)
-
-
-def normal_indices(count=5, total_lq=14, seed=None):
-    """Same frame-selection logic as BurstImageDataset._generate_lq_indices."""
-    rng    = random.Random(seed)
-    others = rng.sample(range(1, total_lq), count - 1)
-    others.insert(count // 2, 0)
-    return others
 
 
 # ---------------------------------------------------------------------------
@@ -168,19 +138,15 @@ class OffsetAccumulator:
 # Inference pass for one checkpoint
 # ---------------------------------------------------------------------------
 
-def run_checkpoint(model, all_burst_dirs, accumulator, args, device, rank, world_size):
+def run_checkpoint(model, source, accumulator, args, device, rank, world_size):
     """Run inference on this rank's subset of bursts.
 
     Returns list of (name, mean_lv2, mean_lv1, mean_casc) — one entry per burst.
     """
-    local_dirs = all_burst_dirs[rank::world_size]
-    results    = []
+    results = []
 
-    for i, burst_dir in enumerate(local_dirs):
-        global_idx = rank + i * world_size
-        indices    = normal_indices(count=args.num_frames, total_lq=14,
-                                    seed=args.seed + global_idx)
-        lq = load_lq(burst_dir, indices)
+    for idx in range(rank, len(source), world_size):
+        lq = source.load(idx)
 
         accumulator.clear()
 
@@ -189,7 +155,7 @@ def run_checkpoint(model, all_burst_dirs, accumulator, args, device, rank, world
                 _ = model(lq.unsqueeze(0).to(device))
 
         m_lv2, m_lv1, m_casc = accumulator.burst_means()
-        results.append((os.path.basename(burst_dir), m_lv2, m_lv1, m_casc))
+        results.append((source.name(idx), m_lv2, m_lv1, m_casc))
 
     return results
 
@@ -244,12 +210,14 @@ def main():
                         help='Folder containing net_g_<iter>.pth checkpoints')
     parser.add_argument('--config', default='main/config.yml',
                         help='YAML config with network_g architecture params')
-    parser.add_argument('--data_root',
-                        default='/groups/rls/blozanod/MambaFusion/dataset/RealBSR_RAW_testpatch',
+    parser.add_argument('--dataset', choices=['realbsr', 'synburst'], default='realbsr',
+                        help='which test set to measure on')
+    parser.add_argument('--data_root', default=None,
                         help='Root directory of test burst folders')
     parser.add_argument('--seed', type=int, default=42,
                         help='Base seed for frame selection')
-    parser.add_argument('--num_frames', type=int, default=5)
+    parser.add_argument('--num_frames', type=int, default=None,
+                        help='burst size; defaults to the config network_g.num_frames')
     parser.add_argument('--log_dir', default='analysis/outputs/ablation_logs')
     args = parser.parse_args()
 
@@ -292,13 +260,28 @@ def main():
         return
 
     # --- Dataset ---
-    all_dirs = sorted(glob.glob(os.path.join(args.data_root, '*')))
-    n_total  = len(all_dirs)
+    if args.num_frames is None:
+        args.num_frames = net_opt['num_frames']
+    if args.num_frames != net_opt['num_frames']:
+        raise ValueError(f'--num_frames {args.num_frames} does not match the config '
+                         f'network_g.num_frames {net_opt["num_frames"]}; the model '
+                         f'has fixed-size temporal parameters and would misread the burst.')
+
+    source   = build_lq_source(args.dataset, args.data_root, args.num_frames, args.seed)
+    n_total  = len(source)
+
+    # One alignment-grid pixel is this many GT pixels. Offsets are reported in
+    # both units because a packed-domain checkpoint and a Bayer-domain one are
+    # not comparable in raw feature-map pixels.
+    gt_per_px = gt_px_per_align_px(net_opt)
 
     if rank == 0:
         logger.info(f'Models dir    : {args.models_dir}')
         logger.info(f'Checkpoints   : {len(ckpt_paths)}')
-        logger.info(f'Data root     : {args.data_root}')
+        logger.info(f'Dataset       : {args.dataset}')
+        logger.info(f'Data root     : {args.data_root or DEFAULT_ROOTS[args.dataset]}')
+        logger.info(f'Align grid    : {"Bayer" if net_opt.get("pre_align", False) else "packed RGGB"}'
+                    f'  (1 px = {gt_per_px} GT px; lv2 px = {gt_per_px * 2} GT px)')
         logger.info(f'Test bursts   : {n_total}  ({n_total // world_size}–{-(-n_total // world_size)} per GPU)')
         logger.info(f'K (kpt/group) : {K}  |  padded_C=112  |  xy_channels=72')
         logger.info(f'Seed          : {args.seed}\n')
@@ -321,7 +304,7 @@ def main():
         state = ckpt.get('params_ema', ckpt.get('params', ckpt.get('state_dict', ckpt)))
         model.load_state_dict(state, strict=True)
 
-        local_results = run_checkpoint(model, all_dirs, accumulator, args, device, rank, world_size)
+        local_results = run_checkpoint(model, source, accumulator, args, device, rank, world_size)
 
         # Gather from all ranks
         gathered = [None] * world_size
@@ -367,6 +350,26 @@ def main():
             logger.info(f'  {it:>8d}  {m2:>10.5f}  {s2:>9.5f}  '
                         f'{m1:>10.5f}  {s1:>9.5f}  '
                         f'{mc:>10.5f}  {sc:>9.5f}')
+        logger.info(SEP)
+
+        # Same numbers in ground-truth pixels, so a packed-domain checkpoint and
+        # a Bayer-domain one can be compared directly. lv2 runs at half the
+        # alignment resolution, so its pixel spans twice as far.
+        logger.info('')
+        logger.info(SEP)
+        logger.info('  THE SAME OFFSETS IN GROUND-TRUTH PIXELS')
+        logger.info(f'  1 alignment px = {gt_per_px} GT px; 1 lv2 px = {gt_per_px * 2} GT px')
+        logger.info(SEP)
+        logger.info(f'  {"Iter":>8}  {"lv2 (GT px)":>12}  {"lv1 (GT px)":>12}  {"casc (GT px)":>13}')
+        logger.info('  ' + '-' * 52)
+        for it, (m2, m1, mc) in zip(iters_list, means_list):
+            logger.info(f'  {it:>8d}  {m2 * gt_per_px * 2:>12.4f}  '
+                        f'{m1 * gt_per_px:>12.4f}  {mc * gt_per_px:>13.4f}')
+        logger.info('  ' + '-' * 52)
+        logger.info('  SyntheticBurst inter-frame translation is up to 24 GT px '
+                    '(plus <=1 deg rotation).')
+        logger.info('  Offsets far below that mean alignment is not compensating the '
+                    'motion that exists.')
         logger.info(SEP)
 
         # Plot
