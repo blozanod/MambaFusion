@@ -27,9 +27,10 @@ Run with:
     torchrun --nproc_per_node=4 analysis/fusion_attention_mass.py \\
         --models_dir /path/to/experiments/MF_STHAT_P0.x/models \\
         [--config      main/config.yml] \\
-        [--data_root   /path/to/RealBSR_RAW_testpatch] \\
+        [--dataset     realbsr|synburst] \\
+        [--data_root   /path/to/test/set] \\
         [--seed        42] \\
-        [--num_frames  5] \\
+        [--num_frames  N]   # defaults to config network_g.num_frames \\
         [--log_dir     analysis/outputs/ablation_logs]
 """
 
@@ -53,8 +54,10 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # sibling: burst_data
 
 from burstISP.archs.mambafusion_arch import MambaFusionNet
+from burst_data import build_lq_source, DEFAULT_ROOTS
 
 
 # ---------------------------------------------------------------------------
@@ -74,43 +77,6 @@ def setup_logger(log_path, rank):
         logger.addHandler(ch)
     return logger
 
-
-# ---------------------------------------------------------------------------
-# Data loading (LQ only — GT not needed for attention measurement)
-# ---------------------------------------------------------------------------
-
-def load_lq(burst_dir, lq_indices):
-    """Return stacked LQ frames as FloatTensor [N, 4, H, W] in [0, 1]."""
-    pkl_file = glob.glob(os.path.join(burst_dir, '*.pkl'))[0]
-    with open(pkl_file, 'rb') as f:
-        meta = pickle.load(f)
-
-    subtract_bl = not meta.get('black_level_subtracted', False)
-    lq_paths    = sorted(glob.glob(os.path.join(burst_dir, '*_x1_*.png')))
-
-    frames = []
-    for idx in lq_indices:
-        img   = cv2.imread(lq_paths[idx], cv2.IMREAD_UNCHANGED)
-        frame = torch.from_numpy(img.astype(np.float32)).permute(2, 0, 1)
-        if subtract_bl:
-            frame = frame - 512.0
-        frame = frame / 16383.0
-        frames.append(frame)
-
-    return torch.stack(frames, dim=0)
-
-
-def normal_indices(count=5, total_lq=14, seed=None):
-    """Same frame-selection logic as BurstImageDataset._generate_lq_indices."""
-    rng    = random.Random(seed)
-    others = rng.sample(range(1, total_lq), count - 1)
-    others.insert(count // 2, 0)
-    return others
-
-
-# ---------------------------------------------------------------------------
-# Attention hook
-# ---------------------------------------------------------------------------
 
 class AttentionMassAccumulator:
     """Collects per-call attention mass per source frame from the FusionBlock
@@ -152,19 +118,15 @@ class AttentionMassAccumulator:
 # Inference pass for one checkpoint
 # ---------------------------------------------------------------------------
 
-def run_checkpoint(model, all_burst_dirs, accumulator, args, device, rank, world_size):
+def run_checkpoint(model, source, accumulator, args, device, rank, world_size):
     """Run inference on this rank's subset of bursts.
 
     Returns list of (name, per_frame_mass[N]) — one entry per burst.
     """
-    local_dirs = all_burst_dirs[rank::world_size]
-    results    = []
+    results = []
 
-    for i, burst_dir in enumerate(local_dirs):
-        global_idx = rank + i * world_size
-        indices    = normal_indices(count=args.num_frames, total_lq=14,
-                                    seed=args.seed + global_idx)
-        lq = load_lq(burst_dir, indices)
+    for idx in range(rank, len(source), world_size):
+        lq = source.load(idx)
 
         accumulator.clear()
 
@@ -172,7 +134,7 @@ def run_checkpoint(model, all_burst_dirs, accumulator, args, device, rank, world
             with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
                 _ = model(lq.unsqueeze(0).to(device))
 
-        results.append((os.path.basename(burst_dir), accumulator.burst_mean()))
+        results.append((source.name(idx), accumulator.burst_mean()))
 
     return results
 
@@ -215,12 +177,14 @@ def main():
                         help='Folder containing net_g_<iter>.pth checkpoints')
     parser.add_argument('--config', default='main/config.yml',
                         help='YAML config with network_g architecture params')
-    parser.add_argument('--data_root',
-                        default='/groups/rls/blozanod/MambaFusion/dataset/RealBSR_RAW_testpatch',
+    parser.add_argument('--dataset', choices=['realbsr', 'synburst'], default='realbsr',
+                        help='which test set to measure on')
+    parser.add_argument('--data_root', default=None,
                         help='Root directory of test burst folders')
     parser.add_argument('--seed', type=int, default=42,
                         help='Base seed for frame selection')
-    parser.add_argument('--num_frames', type=int, default=5)
+    parser.add_argument('--num_frames', type=int, default=None,
+                        help='burst size; defaults to the config network_g.num_frames')
     parser.add_argument('--log_dir', default='analysis/outputs/ablation_logs')
     args = parser.parse_args()
 
@@ -249,6 +213,13 @@ def main():
     net_opt            = opt['network_g']
     net_opt['is_train'] = False
 
+    if args.num_frames is None:
+        args.num_frames = net_opt['num_frames']
+    if args.num_frames != net_opt['num_frames']:
+        raise ValueError(f'--num_frames {args.num_frames} does not match the config '
+                         f'network_g.num_frames {net_opt["num_frames"]}; FusionBlock\'s '
+                         f'relative position bias is sized for the latter.')
+
     ref_idx = args.num_frames // 2
 
     # --- Checkpoints (sorted by iteration) ---
@@ -263,13 +234,14 @@ def main():
         return
 
     # --- Dataset ---
-    all_dirs = sorted(glob.glob(os.path.join(args.data_root, '*')))
-    n_total  = len(all_dirs)
+    source   = build_lq_source(args.dataset, args.data_root, args.num_frames, args.seed)
+    n_total  = len(source)
 
     if rank == 0:
         logger.info(f'Models dir    : {args.models_dir}')
         logger.info(f'Checkpoints   : {len(ckpt_paths)}')
-        logger.info(f'Data root     : {args.data_root}')
+        logger.info(f'Dataset       : {args.dataset}')
+        logger.info(f'Data root     : {args.data_root or DEFAULT_ROOTS[args.dataset]}')
         logger.info(f'Test bursts   : {n_total}')
         logger.info(f'Frames        : {args.num_frames}  (reference slot {ref_idx})')
         logger.info(f'Uniform mass  : non-ref would be {(args.num_frames - 1) / args.num_frames:.4f}')
@@ -293,7 +265,7 @@ def main():
         state = ckpt.get('params_ema', ckpt.get('params', ckpt.get('state_dict', ckpt)))
         model.load_state_dict(state, strict=True)
 
-        local_results = run_checkpoint(model, all_dirs, accumulator, args, device, rank, world_size)
+        local_results = run_checkpoint(model, source, accumulator, args, device, rank, world_size)
 
         # Gather from all ranks
         gathered = [None] * world_size
