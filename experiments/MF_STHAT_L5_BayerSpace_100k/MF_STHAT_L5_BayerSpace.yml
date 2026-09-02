@@ -1,3 +1,7 @@
+# GENERATE TIME: Sat Aug 29 18:23:22 2026
+# CMD:
+# train.py -opt /groups/rls/blozanod/MambaFusion/main/configs/MF_STHAT_L5_BayerSpace.yml --launcher pytorch
+
 # MF_STHAT_L5_BayerSpace — Bayer-domain restructure, 35k smoke test.
 #
 # Change under test vs. MF_STHAT_L3_SynBase:
