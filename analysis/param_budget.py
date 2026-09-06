@@ -2,8 +2,12 @@
 """Analytical parameter counter for MambaFusionNet.
 
 Mirrors the module definitions arithmetically so config variants can be priced
-without a GPU or a torch install. Validated against the reported 5.089M for
-MF_STHAT_L3_SynBase (this script gives 5.088M).
+without a GPU or a torch install.
+
+Tracks the L6 architecture: BurstAlign is the flow pyramid (three levels, a
+cost-volume head at lv3, one DCN) and FusionBlock carries the back-projection
+and the gated difference arm. It therefore no longer prices L5 or L3 correctly
+-- `git show 5baff1a:analysis/param_budget.py` is the L5-era version.
 
 Usage: python analysis/param_budget.py [config.yml ...]
 """
@@ -16,23 +20,32 @@ def li(i,o,bias=True):   return i*o + (o if bias else 0)
 
 def pre_align(in_ch,F):  return cv(in_ch,F,3) + cv(F,4*F,3)
 
-def burst_align(Cin,F,G=4):
+def burst_align(Cin,F,G=4,r=2):
+    """L6 flow pyramid. Three feature levels, a cost-volume flow head at lv3,
+    three 2-layer flow refiners emitting a 2-channel residual each, and ONE
+    DCN at the end (offsets = a learned residual + the accumulated flow)."""
     K=G*9; pad=int(math.ceil(K*3/8)*8)
     t  = cv(Cin,F,3)+cv(F,F,3)+cv(F,F,3)          # feat_extractor_lv1
     t += cv(F,F,3)+cv(F,F,3)                      # feat_extractor_lv2
-    for _ in range(3):                            # lv2 / lv1_2 / cascade offset convs
-        t += cv(2*F,F,3)+cv(F,F,3)
-    t += cv(2*F,F,3)                              # offset_conv_lv1_1
-    t += 3*cv(F,pad,3)                            # 3 offset projections
-    t += 3*(2*cv(F,F,1))                          # 3 DCNv4 value/output projs
-    t += cv(2*F,F,3)                              # feat_fuse_lv1
+    t += cv(F,F,3)+cv(F,F,3)                      # feat_extractor_lv3
+    t += cv((2*r+1)**2,2,3)                       # flow_head_lv3
+    t += 3*(cv(2*F,F,3)+cv(F,2,3))                # offset_conv lv2 / lv1 / casc
+    t += cv(2*F,F,3)                              # offset_conv_dcn
+    t += cv(F,pad,3)                              # offset_proj (single)
+    t += 2*cv(F,F,1)                              # one DCNv4 value/output proj
     return t
 
 def wattn(D,ws,H):       return li(D,D) + (2*ws-1)**2 * H
 def spatial(D,ws,H,M):   return 2*ln(D) + li(D,3*D) + li(D,M*D)+li(M*D,D) + wattn(D,ws,H)
 def st3d(D,ws,H,M,N):    return 2*ln(D) + li(D,3*D) + li(D,M*D)+li(M*D,D) + li(D,D) + (2*ws-1)**2*(2*N-1)*H
 def temporal(D,H,M,N):   return N*D + 2*ln(D) + li(D,M*D)+li(M*D,D) + (3*D*D+3*D) + li(D,D)
-def fusion_blk(D,ws,H,M,N): return 2*ln(D) + 4*li(D,D) + li(D,M*D)+li(M*D,D) + (2*ws-1)**2*(2*N-1)*H
+def fusion_blk(D,ws,H,M,N):
+    """L6 FusionBlock. Signed values are free (same W_v, different argument);
+    the back-projection and the gated difference arm are not."""
+    t  = 2*ln(D) + 4*li(D,D) + li(D,M*D)+li(M*D,D) + (2*ws-1)**2*(2*N-1)*H
+    t += li(D,D//2) + li(D//2,D) + li(D,D)        # bp_squeeze / bp_expand / bp_proj
+    t += 2*D + cv(2*D,D,3) + cv(D,D,3) + D        # diff_norm, gate_conv, diff_fuse, gamma
+    return t
 def ocab(D,ws,OR,H,M):
     ows=int(ws*OR)+ws
     return 2*ln(D) + li(D,3*D) + (ws+ows-1)**2*H + li(D,D) + li(D,M*D)+li(M*D,D)
@@ -66,7 +79,8 @@ def mambairv2(IC,E,depths,heads,W,R,T,KF,MR,S,upscale,UF,RC=None):
 
 def total(c, verbose=True):
     pa = pre_align(4,c['num_feat']) if c.get('pre_align') else 0
-    al = burst_align(c['num_feat'] if c.get('pre_align') else 4, c['num_feat'], c['offset_groups'])
+    al = burst_align(c['num_feat'] if c.get('pre_align') else 4, c['num_feat'], c['offset_groups'],
+                     c.get('offset_r', 2))
     fu = st_hat(c['num_frames'],c['fusion_ws'],c['num_feat'],c['fusion_feat'],c['fusion_mlp_ratio'],
                 c['fusion_heads'],c['fusion_overlap'],c['fusion_depth_s1'],c['fusion_depth_s3'],c['out_feat'])
     up = c['scale']//2 if c.get('pre_align') else c['scale']
@@ -86,7 +100,7 @@ def from_config(path):
     pa_on = n.get('pre_align', False)
     F, E = n['num_feat'], n['embed_dim']
     pa = pre_align(4, F) if pa_on else 0
-    al = burst_align(F if pa_on else 4, F, n['offset_groups'])
+    al = burst_align(F if pa_on else 4, F, n['offset_groups'], n.get('offset_r', 2))
     fu = st_hat(n['num_frames'], n['fusion_ws'], F, n['fusion_feat'], n['fusion_mlp_ratio'],
                 n['fusion_heads'], n['fusion_overlap'], n['fusion_depth_s1'],
                 n['fusion_depth_s3'], E, n.get('fusion_st_ws'))
@@ -101,8 +115,8 @@ def from_config(path):
     return tot
 
 if __name__ == '__main__':
-    paths = sys.argv[1:] or ['main/configs/MF_STHAT_L3_SynBase.yml',
-                             'main/configs/MF_STHAT_L5_PackedControl.yml',
-                             'main/configs/MF_STHAT_L5_BayerSpace.yml']
+    # L5/L3 configs would be priced with L6 arithmetic and come out wrong;
+    # use the version at `git show 5baff1a:analysis/param_budget.py` for those.
+    paths = sys.argv[1:] or ['main/configs/MF_STHAT_L6_FlowFusion.yml']
     for p in paths:
         from_config(p)

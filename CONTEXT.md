@@ -41,8 +41,10 @@ The project is a research prototype. Training runs on an HPC cluster (4× GPU). 
 Defined in [burstISP/archs/mambafusion_arch.py](burstISP/archs/mambafusion_arch.py). Three sequential modules:
 
 ### 1. BurstAlign (`burstISP/archs/dcn_align_arch.py`)
-- Pyramid (2-level) + Cascading + Deformable alignment via **DCNv4** (custom CUDA kernel, compiled at `burstISP/utils/DCNv4/`).
-- Extracts features from each LQ frame, computes DCN offsets relative to the center/reference frame, and returns aligned feature maps `[B, N, C, H, W]` plus reference features `ref_feats`.
+- **L6:** a 3-level flow pyramid feeding a single **DCNv4** deformable step (custom CUDA kernel, compiled at `burstISP/utils/DCNv4/`). A `±r` cost volume at lv3 (coarsest) *measures* displacement instead of descending a gradient toward it; lv2, lv1 and a cascade stage each add a residual flow, predicted from flow-warped features.
+- Coarse-to-fine composition happens in **pixel units** (`up_flow`: bilinear ×2, magnitude ×2), not in packed DCN offset channels. The one place the packed layout still matters is `scatter_flow`, whose index buffers match the CUDA kernel's per-group `[K*2 offsets | K masks]` blocking — **not** the `(dx, dy, mask)`-per-kernel-point interleave that pre-L6 code assumed. `analysis/dcn_scatter_check.py --scatter` is the test.
+- **Single interpolation** (BasicVSR++ form): the residual offset is predicted from warped features, but the DCN samples the *original* features with the flow folded into its offsets. Two stacked resamplings would destroy the sub-pixel content burst SR exists to recover.
+- Returns aligned features `[B, N, C, H, W]`, reference features `ref_feats` `[B, C, H, W]`, and a per-level flow dict. `MambaFusionNet.forward(..., return_aux=True)` surfaces the flows for the supervision loss and for `offset_analysis.py`; the default single-return contract is unchanged.
 - Runs in **float32** (forced via `autocast(enabled=False)`) for numerical stability in offset computation.
 - **Note:** `ref_feats` feeds the restoration module's zero-init `skip_proj` — `MambaFusionNet.forward` calls `restoration(fused_input, ref_feats)`. It was temporarily unwired (`(fused_input, fused_input)`) as a deliberate experiment to reduce reliance on the reference frame (it did not help); the L1 revert (PLAN.md) restored the wiring.
 

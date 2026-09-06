@@ -1,20 +1,32 @@
 #!/usr/bin/env python3
 """
-DCN Offset Magnitude Analysis Across Training Checkpoints
+Alignment Displacement Analysis Across Training Checkpoints
 
 For every net_g_*.pth checkpoint in a given experiment models/ directory,
 this script runs inference on the full test set and measures the mean
-absolute offset magnitude produced by each of the three DCN projection layers
-in BurstAlign:
+absolute displacement BurstAlign estimates at each pyramid level:
 
-  offset_proj_lv2   — coarse pyramid level, resolution H/2 x W/2
-  offset_proj_lv1   — fine   pyramid level, resolution H   x W
-  casc_offset_proj  — cascading refinement,  resolution H   x W
+  lv3  — coarsest, resolution H/4 x W/4, correlation flow head
+  lv2  — mid,      resolution H/2 x W/2, flow2  = up(flow3) + residual
+  lv1  — finest,   resolution H   x W,   flow1b = flow1 + cascade residual
 
-Each projection layer outputs a tensor of shape [B, padded_C, H, W] where
-the channels are interleaved as (Δx, Δy, mask) for each of the K=36 kernel
-points.  Only the Δx and Δy channels (72 of the 112) are used to compute
-mean |offset| in pixels at that level's spatial resolution.
+These come from the model's aux return (`MambaFusionNet.forward(...,
+return_aux=True)`), not from a forward hook on a projection layer, and they
+are in *pixels at that level's resolution* by construction.
+
+That matters. The pre-L6 version of this script hooked the three
+offset_proj layers and pulled out (Δx, Δy) on the assumption that DCNv4
+packs its offset tensor as (Δx, Δy, mask) per kernel point, at channels
+k*3 and k*3+1. The CUDA kernel actually blocks per group as
+[K*2 offsets | K masks] (see DCNv4_op/src/cuda/dcnv4_im2col_cuda.cuh:44 and
+113-124), so those readings averaged a mix of offset and mask channels and
+are not a measurement of displacement. Any number produced by this script
+before L6 should be treated as void, including the "44 % of mean motion
+compensated" figure in the L5 post-run analysis.
+
+The levels *compose*: lv3's estimate is upsampled (x2, and doubled in
+magnitude) into lv2 and again into lv1, so lv1 already contains the whole
+chain. Read lv1 as the total applied displacement — do not add the rows.
 
 Outputs:
   - Log file  : analysis/outputs/ablation_logs/offset_analysis_<timestamp>.log
@@ -76,86 +88,43 @@ def setup_logger(log_path, rank):
 
 
 # ---------------------------------------------------------------------------
-# Offset hooks
+# Displacement readout
 # ---------------------------------------------------------------------------
 
-def _xy_mean_abs(offset_tensor, K):
-    """Mean absolute displacement across all Δx/Δy channels, batch, and space.
+LEVELS = ('lv3', 'lv2', 'lv1')
 
-    offset_tensor : [B, padded_C, H, W]
-    K             : number of DCN kernel points (offset_groups × 9)
+# How many level-pixels one pixel at that level spans, relative to lv1.
+LEVEL_STRIDE = {'lv1': 1, 'lv2': 2, 'lv3': 4}
 
-    Returns a Python float — mean |offset| in pixels at this level's resolution.
+
+def flow_mean_abs(flow):
+    """Mean |displacement| over both axes, frames, batch and space.
+
+    flow : [B, N, 2, h, w] in pixels at that level's own resolution.
     """
-    xy_idx = []
-    for k in range(K):
-        xy_idx.extend([k * 3, k * 3 + 1])          # Δx, Δy per point
-    xy = offset_tensor[:, xy_idx, :, :]              # [B, 2K, H, W]
-    return xy.abs().mean().item()
-
-
-class OffsetAccumulator:
-    """Collects per-call mean |offset| from the three projection layers."""
-
-    def __init__(self, K):
-        self.K = K
-        self._data = {'lv2': [], 'lv1': [], 'casc': []}
-        self._handles = []
-
-    def register(self, model):
-        align = model.alignment
-
-        def make_hook(name):
-            def hook(module, inp, output):
-                self._data[name].append(_xy_mean_abs(output.detach(), self.K))
-            return hook
-
-        self._handles = [
-            align.offset_proj_lv2.register_forward_hook(make_hook('lv2')),
-            align.offset_proj_lv1.register_forward_hook(make_hook('lv1')),
-            align.casc_offset_proj.register_forward_hook(make_hook('casc')),
-        ]
-
-    def clear(self):
-        for v in self._data.values():
-            v.clear()
-
-    def burst_means(self):
-        """Return (mean_lv2, mean_lv1, mean_casc) for the calls since last clear()."""
-        return (
-            float(np.mean(self._data['lv2'])),
-            float(np.mean(self._data['lv1'])),
-            float(np.mean(self._data['casc'])),
-        )
-
-    def remove(self):
-        for h in self._handles:
-            h.remove()
-        self._handles.clear()
+    return flow.detach().abs().float().mean().item()
 
 
 # ---------------------------------------------------------------------------
 # Inference pass for one checkpoint
 # ---------------------------------------------------------------------------
 
-def run_checkpoint(model, source, accumulator, args, device, rank, world_size):
+def run_checkpoint(model, source, args, device, rank, world_size):
     """Run inference on this rank's subset of bursts.
 
-    Returns list of (name, mean_lv2, mean_lv1, mean_casc) — one entry per burst.
+    Returns list of (name, mean_lv3, mean_lv2, mean_lv1) — one entry per burst.
     """
     results = []
 
     for idx in range(rank, len(source), world_size):
         lq = source.load(idx)
 
-        accumulator.clear()
-
         with torch.no_grad():
             with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-                _ = model(lq.unsqueeze(0).to(device))
+                _, aux = model(lq.unsqueeze(0).to(device), return_aux=True)
 
-        m_lv2, m_lv1, m_casc = accumulator.burst_means()
-        results.append((source.name(idx), m_lv2, m_lv1, m_casc))
+        flows = aux['flows']
+        results.append((source.name(idx), *(flow_mean_abs(flows[lv]) for lv in LEVELS)))
 
     return results
 
@@ -164,35 +133,41 @@ def run_checkpoint(model, source, accumulator, args, device, rank, world_size):
 # Plot
 # ---------------------------------------------------------------------------
 
-def save_plot(iters, means, stds, output_path):
+def save_plot(iters, means, stds, output_path, gt_per_px):
     """
     iters : list[int]
-    means : list[(m_lv2, m_lv1, m_casc)]
-    stds  : list[(s_lv2, s_lv1, s_casc)]
+    means : list[(m_lv3, m_lv2, m_lv1)]  — mean |flow| in each level's own px
+    stds  : list[(s_lv3, s_lv2, s_lv1)]
+
+    Plotted in GT pixels so the three levels are on one comparable axis and
+    can be read against the protocol's actual motion (mean 12, max 24 GT px).
     """
-    iters    = np.array(iters)
-    lv2_m    = np.array([m[0] for m in means])
-    lv1_m    = np.array([m[1] for m in means])
-    casc_m   = np.array([m[2] for m in means])
-    lv2_s    = np.array([s[0] for s in stds])
-    lv1_s    = np.array([s[1] for s in stds])
-    casc_s   = np.array([s[2] for s in stds])
+    iters   = np.array(iters)
+    fig, ax = plt.subplots(figsize=(11, 5))
+    colours = ['#1f77b4', '#ff7f0e', '#2ca02c']
 
-    fig, ax  = plt.subplots(figsize=(11, 5))
-    colours  = ['#1f77b4', '#ff7f0e', '#2ca02c']
+    labels = {
+        'lv3': 'lv3  (coarsest, H/4) — correlation flow head',
+        'lv2': 'lv2  (mid, H/2)',
+        'lv1': 'lv1  (finest, H) — total applied displacement',
+    }
 
-    for vals, errs, label, col in [
-        (lv2_m,  lv2_s,  'offset_proj_lv2  (coarse, H/2)', colours[0]),
-        (lv1_m,  lv1_s,  'offset_proj_lv1  (fine,   H)',   colours[1]),
-        (casc_m, casc_s, 'casc_offset_proj (cascade, H)',  colours[2]),
-    ]:
-        ax.plot(iters, vals, marker='o', color=col, label=label)
-        ax.fill_between(iters, vals - errs, vals + errs,
-                        alpha=0.15, color=col)
+    for i, lvl in enumerate(LEVELS):
+        # One level pixel spans LEVEL_STRIDE[lvl] alignment px, each gt_per_px GT px.
+        k = gt_per_px * LEVEL_STRIDE[lvl]
+        vals = np.array([m[i] for m in means]) * k
+        errs = np.array([s[i] for s in stds]) * k
+        ax.plot(iters, vals, marker='o', color=colours[i], label=labels[lvl])
+        ax.fill_between(iters, vals - errs, vals + errs, alpha=0.15, color=colours[i])
+
+    ax.axhline(12.0, ls='--', lw=1, color='#666666')
+    ax.axhline(24.0, ls=':',  lw=1, color='#666666')
+    ax.text(iters[-1], 12.0, ' mean motion present', va='bottom', ha='right', fontsize=9, color='#666666')
+    ax.text(iters[-1], 24.0, ' max motion present',  va='bottom', ha='right', fontsize=9, color='#666666')
 
     ax.set_xlabel('Training Iteration', fontsize=12)
-    ax.set_ylabel('Mean |Offset|  (pixels at level resolution)', fontsize=12)
-    ax.set_title('BurstAlign DCN Offset Magnitude vs. Training Iteration', fontsize=13)
+    ax.set_ylabel('Mean |displacement|  (ground-truth pixels)', fontsize=12)
+    ax.set_title('BurstAlign estimated displacement vs. Training Iteration', fontsize=13)
     ax.legend(fontsize=10)
     ax.grid(True, alpha=0.35)
     fig.tight_layout()
@@ -246,8 +221,6 @@ def main():
     net_opt            = opt['network_g']
     net_opt['is_train'] = False
 
-    K = net_opt['offset_groups'] * 9   # 4 × 9 = 36 kernel points
-
     # --- Checkpoints (sorted by iteration) ---
     ckpt_paths = sorted(
         glob.glob(os.path.join(args.models_dir, 'net_g_[0-9]*.pth')),
@@ -270,9 +243,9 @@ def main():
     source   = build_lq_source(args.dataset, args.data_root, args.num_frames, args.seed)
     n_total  = len(source)
 
-    # One alignment-grid pixel is this many GT pixels. Offsets are reported in
-    # both units because a packed-domain checkpoint and a Bayer-domain one are
-    # not comparable in raw feature-map pixels.
+    # One alignment-grid (lv1) pixel is this many GT pixels. Displacements are
+    # reported in both units because a packed-domain checkpoint and a
+    # Bayer-domain one are not comparable in raw feature-map pixels.
     gt_per_px = gt_px_per_align_px(net_opt)
 
     if rank == 0:
@@ -281,16 +254,15 @@ def main():
         logger.info(f'Dataset       : {args.dataset}')
         logger.info(f'Data root     : {args.data_root or DEFAULT_ROOTS[args.dataset]}')
         logger.info(f'Align grid    : {"Bayer" if net_opt.get("pre_align", False) else "packed RGGB"}'
-                    f'  (1 px = {gt_per_px} GT px; lv2 px = {gt_per_px * 2} GT px)')
+                    f'  (lv1 px = {gt_per_px} GT px, lv2 px = {gt_per_px * 2}, lv3 px = {gt_per_px * 4})')
         logger.info(f'Test bursts   : {n_total}  ({n_total // world_size}–{-(-n_total // world_size)} per GPU)')
-        logger.info(f'K (kpt/group) : {K}  |  padded_C=112  |  xy_channels=72')
+        logger.info(f'Cost-vol r    : {net_opt.get("offset_r", 2)} lv3 px '
+                    f'(+/-{net_opt.get("offset_r", 2) * gt_per_px * 4} GT px search window)')
         logger.info(f'Seed          : {args.seed}\n')
 
     # Build model once; reload state dict per checkpoint
     model       = MambaFusionNet(**net_opt).to(device)
     model.eval()
-    accumulator = OffsetAccumulator(K)
-    accumulator.register(model)
 
     iters_list  = []
     means_list  = []
@@ -304,7 +276,7 @@ def main():
         state = ckpt.get('params_ema', ckpt.get('params', ckpt.get('state_dict', ckpt)))
         model.load_state_dict(state, strict=True)
 
-        local_results = run_checkpoint(model, source, accumulator, args, device, rank, world_size)
+        local_results = run_checkpoint(model, source, args, device, rank, world_size)
 
         # Gather from all ranks
         gathered = [None] * world_size
@@ -314,19 +286,15 @@ def main():
             flat = [r for rank_res in gathered for r in rank_res]
             n    = len(flat)
 
-            arr_lv2  = np.array([r[1] for r in flat])
-            arr_lv1  = np.array([r[2] for r in flat])
-            arr_casc = np.array([r[3] for r in flat])
+            arrs = [np.array([r[i + 1] for r in flat]) for i in range(len(LEVELS))]
 
-            m = (arr_lv2.mean(), arr_lv1.mean(), arr_casc.mean())
-            s = (arr_lv2.std(),  arr_lv1.std(),  arr_casc.std())
+            m = tuple(a.mean() for a in arrs)
+            s = tuple(a.std() for a in arrs)
 
             logger.info(
                 f'iter {iter_num:>7d} | '
-                f'lv2={m[0]:.5f}±{s[0]:.5f}  '
-                f'lv1={m[1]:.5f}±{s[1]:.5f}  '
-                f'casc={m[2]:.5f}±{s[2]:.5f}  '
-                f'({n} bursts)'
+                + '  '.join(f'{lv}={m[i]:.5f}±{s[i]:.5f}' for i, lv in enumerate(LEVELS))
+                + f'  ({n} bursts)'
             )
 
             iters_list.append(iter_num)
@@ -336,49 +304,48 @@ def main():
         torch.cuda.empty_cache()
 
     if rank == 0:
-        # Summary table
+        # Summary table, in each level's own pixel units
         SEP = '=' * 78
         logger.info('\n' + SEP)
-        logger.info('  OFFSET MAGNITUDE SUMMARY  (mean ± std of mean|offset| in pixels)')
+        logger.info('  DISPLACEMENT SUMMARY  (mean ± std of mean|flow|, in that level\'s own px)')
         logger.info('  Each value is averaged over all bursts × all frames × all spatial positions')
         logger.info(SEP)
-        logger.info(f'  {"Iter":>8}  {"lv2 mean":>10}  {"lv2 std":>9}  '
-                    f'{"lv1 mean":>10}  {"lv1 std":>9}  '
-                    f'{"casc mean":>10}  {"casc std":>9}')
+        logger.info('  ' + f'{"Iter":>8}' + ''.join(f'  {lv + " mean":>10}  {lv + " std":>9}' for lv in LEVELS))
         logger.info('  ' + '-' * 72)
-        for it, (m2, m1, mc), (s2, s1, sc) in zip(iters_list, means_list, stds_list):
-            logger.info(f'  {it:>8d}  {m2:>10.5f}  {s2:>9.5f}  '
-                        f'{m1:>10.5f}  {s1:>9.5f}  '
-                        f'{mc:>10.5f}  {sc:>9.5f}')
+        for it, m, sd in zip(iters_list, means_list, stds_list):
+            logger.info('  ' + f'{it:>8d}' + ''.join(f'  {m[i]:>10.5f}  {sd[i]:>9.5f}'
+                                                     for i in range(len(LEVELS))))
         logger.info(SEP)
 
-        # Same numbers in ground-truth pixels, so a packed-domain checkpoint and
-        # a Bayer-domain one can be compared directly. lv2 runs at half the
-        # alignment resolution, so its pixel spans twice as far.
+        # The same numbers in ground-truth pixels, so a packed-domain checkpoint
+        # and a Bayer-domain one can be compared directly, and so the rows can be
+        # read against the motion the protocol actually generates.
         logger.info('')
         logger.info(SEP)
-        logger.info('  THE SAME OFFSETS IN GROUND-TRUTH PIXELS')
-        logger.info(f'  1 alignment px = {gt_per_px} GT px; 1 lv2 px = {gt_per_px * 2} GT px')
+        logger.info('  THE SAME DISPLACEMENTS IN GROUND-TRUTH PIXELS')
+        logger.info(f'  1 lv1 px = {gt_per_px} GT px; 1 lv2 px = {gt_per_px * 2}; 1 lv3 px = {gt_per_px * 4}')
         logger.info(SEP)
-        logger.info(f'  {"Iter":>8}  {"lv2 (GT px)":>12}  {"lv1 (GT px)":>12}  {"casc (GT px)":>13}')
+        logger.info('  ' + f'{"Iter":>8}' + ''.join(f'  {lv + " (GT px)":>13}' for lv in LEVELS))
         logger.info('  ' + '-' * 52)
-        for it, (m2, m1, mc) in zip(iters_list, means_list):
-            logger.info(f'  {it:>8d}  {m2 * gt_per_px * 2:>12.4f}  '
-                        f'{m1 * gt_per_px:>12.4f}  {mc * gt_per_px:>13.4f}')
+        for it, m in zip(iters_list, means_list):
+            logger.info('  ' + f'{it:>8d}'
+                        + ''.join(f'  {m[i] * gt_per_px * LEVEL_STRIDE[lv]:>13.4f}'
+                                  for i, lv in enumerate(LEVELS)))
         logger.info('  ' + '-' * 52)
-        logger.info('  SyntheticBurst inter-frame translation is up to 24 GT px '
+        logger.info('  SyntheticBurst inter-frame translation is 12 GT px mean, up to 24 GT px '
                     '(plus <=1 deg rotation).')
-        logger.info('  Offsets far below that mean alignment is not compensating the '
-                    'motion that exists.')
+        logger.info('  The levels COMPOSE — lv3 is upsampled into lv2 and again into lv1 — so')
+        logger.info('  lv1 is the total applied displacement. Do not sum the rows.')
+        logger.info('  lv1 far below 12 GT px means alignment is not compensating the motion')
+        logger.info('  that exists; the coarse rows say at which level the estimate stalls.')
         logger.info(SEP)
 
         # Plot
         plot_path = os.path.join(log_dir, f'offset_analysis_{timestamp}.png')
-        save_plot(iters_list, means_list, stds_list, plot_path)
+        save_plot(iters_list, means_list, stds_list, plot_path, gt_per_px)
         logger.info(f'\nPlot → {plot_path}')
         logger.info(f'Log  → {log_path}')
 
-    accumulator.remove()
     dist.destroy_process_group()
 
 

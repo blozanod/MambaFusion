@@ -27,7 +27,7 @@ from burstISP.utils.registry import ARCH_REGISTRY
 import burstISP.archs  # noqa: F401  (populates ARCH_REGISTRY)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_CFG = os.path.join(REPO_ROOT, 'main', 'configs', 'MF_STHAT_L5_BayerSpace.yml')
+DEFAULT_CFG = os.path.join(REPO_ROOT, 'main', 'configs', 'MF_STHAT_L6_FlowFusion.yml')
 
 
 def human(n):
@@ -92,6 +92,33 @@ def check(cfg_path, batch_override=None):
         return False
     print(f'  backward ok    loss {loss.item():.4f}, all parameters received gradients')
 
+    # Aux path: the flow-supervision return. Checked separately from the
+    # backward above, which deliberately runs WITHOUT aux -- that is the
+    # lambda-has-decayed-to-zero regime, and it passing means the flow head is
+    # still on the gradient path through the DCN offsets, so
+    # find_unused_parameters can stay false.
+    if opt.get('train', {}).get('flow_opt'):
+        with torch.no_grad(), torch.autocast('cuda', dtype=torch.bfloat16):
+            _, aux = net(lq, return_aux=True)
+
+        # Alignment runs on the Bayer grid when pre_align is on, so lv1 sits at
+        # 2x the packed crop -- which is exactly the resolution the dataset's
+        # flow_vectors come at, and what MambaFusionModel.flow_loss assumes.
+        fac = 2 if net_opt.get('pre_align', False) else 1
+        want = {'lv1': img_size * fac, 'lv2': img_size * fac // 2, 'lv3': img_size * fac // 4}
+        bad = []
+        for lvl, side in want.items():
+            got = tuple(aux['flows'][lvl].shape)
+            if got != (batch, n_frames, 2, side, side):
+                bad.append(f'{lvl}: got {got}, expected {(batch, n_frames, 2, side, side)}')
+        if bad:
+            print('  AUX      FAIL  flow shapes do not match the supervision grid:')
+            for b in bad:
+                print(f'      {b}')
+            return False
+        print(f'  aux      ok    flows lv1 {want["lv1"]}^2 / lv2 {want["lv2"]}^2 / '
+              f'lv3 {want["lv3"]}^2, GT flow_vectors are {img_size * 2}^2')
+
     peak = torch.cuda.max_memory_allocated() / 2**30
     total_mem = torch.cuda.get_device_properties(0).total_memory / 2**30
     print(f'  peak memory    {peak:.2f} GiB of {total_mem:.1f} GiB '
@@ -107,7 +134,7 @@ def check(cfg_path, batch_override=None):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('configs', nargs='*', default=[DEFAULT_CFG],
-                    help='config YAML path(s); defaults to the L5 Bayer config')
+                    help='config YAML path(s); defaults to the L6 config')
     ap.add_argument('--batch', type=int, default=None,
                     help="override batch_size_per_gpu (probe what fits)")
     args = ap.parse_args()

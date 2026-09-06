@@ -58,7 +58,11 @@ class MambaFusionNet(nn.Module):
             restoration_img_size = self.opt['img_size']
 
         # Alignment module
-        self.alignment = BurstAlign(in_channels=align_in_ch, num_feat=self.num_feat, num_frames=self.num_frames, offset_groups=self.opt['offset_groups'])
+        # offset_r is the lv3 cost-volume radius, in lv3 pixels. At the Bayer
+        # grid one lv3 pixel spans 4 alignment px = 16 GT px, so r=2 searches
+        # +/-32 GT px against a 24 GT px maximum inter-frame translation.
+        self.alignment = BurstAlign(in_channels=align_in_ch, num_feat=self.num_feat, num_frames=self.num_frames,
+                                    offset_groups=self.opt['offset_groups'], r=self.opt.get('offset_r', 2))
 
         # Fusion module
         self.fusion = ST_HAT(
@@ -100,7 +104,21 @@ class MambaFusionNet(nn.Module):
             residual_chans=self.num_feat
         )
 
-    def forward(self, x):
+    def forward(self, x, return_aux=False):
+        """
+        Args:
+            x (Tensor): packed-RGGB burst, [B, N, C_in, h, w].
+            return_aux (bool): also return the alignment's per-level flow
+                estimates, for the flow-supervision loss (PLAN L6 step 8) and
+                for offset_analysis. Off by default so every existing caller
+                keeps the single-tensor contract.
+
+        Returns:
+            output, or (output, aux) when return_aux is set. aux is
+            {'flows': {'lv1'|'lv2'|'lv3': [B, N, 2, h, w]}}, cropped back to
+            the un-padded extent so it lines up with the dataset's
+            flow_vectors, and in each level's own pixel units.
+        """
         # Dynamic padding
         B, N, C_in, h_ori, w_ori = x.shape
         mod = 16 
@@ -112,7 +130,7 @@ class MambaFusionNet(nn.Module):
         # Align features from burst frames
         x_align = self.pre_align(x) if self.use_pre_align else x
         with torch.amp.autocast("cuda", enabled=False):
-            aligned_burst, ref_feats = self.alignment(x_align.float())  # Shape: [B, N, C, H, W]
+            aligned_burst, ref_feats, flows = self.alignment(x_align.float())  # Shape: [B, N, C, H, W]
 
         # ST-HAT Fusion
         fused_input = self.fusion(aligned_burst)
@@ -122,7 +140,22 @@ class MambaFusionNet(nn.Module):
         output = self.restoration(fused_input, ref_feats)  # Shape: [B, C_out, H_out, W_out]
 
         output = output[..., :h_ori * self.opt['scale'], :w_ori * self.opt['scale']]
-        return output
+
+        if not return_aux:
+            return output
+
+        # Undo the reflection padding on the flows. PreAlign doubles the grid,
+        # so the un-padded alignment extent is h_ori * fac; each coarser level
+        # is a further factor of 2 down. The padding is added on the bottom and
+        # right, so the top-left crop is the corresponding region at every level.
+        fac = 2 if self.use_pre_align else 1
+        aux_flows = {}
+        for lvl, div in (('lv1', 1), ('lv2', 2), ('lv3', 4)):
+            fh = max(1, (h_ori * fac) // div)
+            fw = max(1, (w_ori * fac) // div)
+            aux_flows[lvl] = flows[lvl][..., :fh, :fw]
+
+        return output, {'flows': aux_flows}
 
 # NOTE: this module cannot be executed directly (`python -m burstISP.archs.
 # mambafusion_arch` or `python burstISP/archs/mambafusion_arch.py`). The archs
