@@ -38,8 +38,7 @@ class BurstAlign(nn.Module):
     """ BurstAlign module for aligning burst frames with DCNv4.
 
     Alignment module using Pyramid, Cascading and Deformable convolution (PCD).
-    Adapted to use DCNv4 and optimised for 2 pyramid levels.
-    Adapted to apply upsampling AFTER DCN, not before. 
+    Adapted to use DCNv4.
 
     Ref:
         EDVR: Video Restoration with Enhanced Deformable Convolutional Networks
@@ -50,7 +49,7 @@ class BurstAlign(nn.Module):
     offset_groups (int): Number of groups for DCN offset prediction. Default: 4
     """
 
-    def __init__(self, in_channels=4, num_feat=64, num_frames=5, offset_groups=4, r=4):
+    def __init__(self, in_channels=4, num_feat=64, num_frames=5, offset_groups=4, r=2):
         super(BurstAlign, self).__init__()
         # Index Buffers: DCNv4 works as [x1, y1, xn, yn, m1, mn]
         kernel_size = 3
@@ -105,9 +104,21 @@ class BurstAlign(nn.Module):
 
         # flow heads + offset convs
         self.flow_head_lv3 = nn.Conv2d((2*r+1)**2, 2, kernel_size=kernel_size, padding=1) # cost vol outputs (2r+1)^2 chans
-        self.offset_conv_lv2 = nn.Conv2d(num_feat * 2, 2, kernel_size=kernel_size, padding=1)
-        self.offset_conv_lv1 = nn.Conv2d(num_feat * 2, 2, kernel_size=kernel_size, padding=1)
-        self.offset_conv_casc = nn.Conv2d(num_feat * 2, 2, kernel_size=kernel_size, padding=1)
+        self.offset_conv_lv2 = nn.Sequential(
+            nn.Conv2d(num_feat * 2, num_feat, kernel_size=kernel_size, padding=1),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Conv2d(num_feat, 2, kernel_size=kernel_size, padding=1)
+            )
+        self.offset_conv_lv1 = nn.Sequential(
+            nn.Conv2d(num_feat * 2, num_feat, kernel_size=kernel_size, padding=1),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Conv2d(num_feat, 2, kernel_size=kernel_size, padding=1)
+            )
+        self.offset_conv_casc = nn.Sequential(
+            nn.Conv2d(num_feat * 2, num_feat, kernel_size=kernel_size, padding=1),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Conv2d(num_feat, 2, kernel_size=kernel_size, padding=1)
+            )
         self.offset_conv_dcn = nn.Conv2d(num_feat * 2, num_feat, kernel_size=kernel_size, padding=1)
 
         # DCNv4
@@ -124,8 +135,9 @@ class BurstAlign(nn.Module):
         convolution, giving stable early-training gradients.
         """
         for proj in [self.offset_conv_lv1, self.offset_conv_lv2, self.offset_conv_casc, self.offset_proj]:
-            nn.init.constant_(proj.weight, 0)
-            nn.init.constant_(proj.bias, 0)
+            layer = proj[-1] if isinstance(proj, nn.Sequential) else proj
+            nn.init.constant_(layer.weight, 0)
+            nn.init.constant_(layer.bias, 0)
 
     def warp(self, x, flow, align_corners=False):
         """
@@ -213,12 +225,13 @@ class BurstAlign(nn.Module):
         feat2 = self.feat_extractor_lv2(feat1) # B C H/2 W/2
         feat3 = self.feat_extractor_lv3(feat2) # B C H/4 W/4
 
-        ref1 = feat1.view(B, N, -1, H, W)[:, self.center_frame_idx].repeat_interleave(N, dim=0)
+        ref1_b = feat1.view(B, N, -1, H, W)[:, self.center_frame_idx]
+        ref1 = ref1_b.repeat_interleave(N, dim=0)
         ref2 = feat2.view(B, N, -1, H // 2, W // 2)[:, self.center_frame_idx].repeat_interleave(N, dim=0)
         ref3 = feat3.view(B, N, -1, H // 4, W // 4)[:, self.center_frame_idx].repeat_interleave(N, dim=0)
 
         # lv3 alignment
-        corr3 = self.cost_vol(ref3, feat3, r=self.r) # estimate pixel displacement coarsely, r = 4 -> 32 real pixels
+        corr3 = self.cost_vol(ref3, feat3, r=self.r) # estimate pixel displacement coarsely, r = 2 -> 32 real pixels
         flow3 = self.flow_head_lv3(corr3)
 
         # lv2 alignment
@@ -236,8 +249,8 @@ class BurstAlign(nn.Module):
         flow1b = flow1 + self.offset_conv_casc(torch.cat((warp1b, ref1), dim=1))
 
         # dcn
-        off_feat = self.offset_conv_dcn(torch.cat((feat1, ref1), dim=1))
+        off_feat = self.lrelu(self.offset_conv_dcn(torch.cat((warp1b, ref1), dim=1)))
         om = self.offset_proj(off_feat)
         aligned = self.lrelu(self.dcn(feat1, self.scatter_flow(om, flow1b)))
 
-        return aligned.view(B, N, self.num_feat, H, W), ref1
+        return aligned.view(B, N, self.num_feat, H, W), ref1_b
