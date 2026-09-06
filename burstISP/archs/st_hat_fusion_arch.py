@@ -624,6 +624,28 @@ class FusionBlock(nn.Module):
         self.proj = nn.Linear(num_feat, num_feat)
         self.softmax = nn.Softmax(dim=-1)
 
+        # Zero init for difference arm
+        nn.init.zeros_(self.wv.bias)
+        nn.init.zeros_(self.proj.bias)
+
+        # Back projection
+        bp_dim = num_feat // 2
+        self.bp_squeeze = nn.Linear(num_feat, bp_dim)
+        self.bp_act = nn.GELU()
+        self.bp_expand = nn.Linear(bp_dim, num_feat)
+        self.bp_proj = nn.Linear(num_feat, num_feat)
+        # nn.init.zeros_(self.bp_proj.weight)
+        # nn.init.zeros_(self.bp_proj.bias)
+        nn.init.zeros_(self.bp_squeeze.bias)
+        nn.init.zeros_(self.bp_expand.bias)
+        nn.init.zeros_(self.bp_proj.bias)
+
+        # Gated diff arm
+        self.diff_norm = nn.GroupNorm(1, num_feat)
+        self.gate_conv = nn.Conv2d(2 * num_feat, num_feat, 3, 1, 1)
+        self.diff_fuse = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
+        self.gamma = nn.Parameter(torch.zeros(1, num_feat, 1, 1))
+
         self.relative_position_bias_table = nn.Parameter(
             torch.zeros((2 * window_size - 1) * (2 * window_size - 1) * (2 * num_frames - 1), num_heads))  # 2*Wh-1 * 2*Ww-1 * 2*N-1, nH
         trunc_normal_(self.relative_position_bias_table, std=.02)
@@ -648,12 +670,17 @@ class FusionBlock(nn.Module):
         x_win = rearrange(x, 'b n c (wh ws1) (ww ws2) -> (b wh ww) n (ws1 ws2) c', ws1=ws, ws2=ws)
         x_norm = self.norm1(x_win)
 
+        # Signed values for attention
+        x_ref = x_norm[:, ref:ref+1, :, :]
+        x_diff = x_norm - x_ref
+        x_diff_v = rearrange(x_diff, 'b n p c -> b (n p) c')
+
         x_q = x_norm[:, ref, :, :]
         x_kv = rearrange(x_norm, 'b n p c -> b (n p) c')
 
         q = rearrange(self.wq(x_q), 'b p (h d) -> b h p d', h=self.num_heads)
         k = rearrange(self.wk(x_kv), 'b n (h d) -> b h n d', h=self.num_heads)
-        v = rearrange(self.wv(x_kv), 'b n (h d) -> b h n d', h=self.num_heads)
+        v = rearrange(self.wv(x_diff_v), 'b n (h d) -> b h n d', h=self.num_heads) # Using xi - xref
 
         q = q * self.scale
         attn = (q @ k.transpose(-2, -1))
@@ -670,6 +697,10 @@ class FusionBlock(nn.Module):
         x_attn = rearrange(x_attn, 'b h p d -> b p (h d)')
         attn_win = self.proj(x_attn)
 
+        # backprojection
+        g_e = self.bp_expand(self.bp_act(self.bp_squeeze(attn_win)))
+        attn_win = attn_win + self.bp_proj(attn_win - g_e)
+
         # residual
         x_res1 = attn_win + x_win[:, ref]
 
@@ -682,7 +713,19 @@ class FusionBlock(nn.Module):
         x_out = rearrange(x_res2, '(b wh ww) (ws1 ws2) c -> b c (wh ws1) (ww ws2)',
                           ws1=ws, ws2=ws, b=B, wh=wh, ww=ww)
 
+        # Diff arm
+        x_out = x_out + self.gamma * self._diff_arm(x, ref)
+
         return x_out
+
+    def _diff_arm(self, x, ref):
+        B, N, C, H, W = x.shape
+        x_n = self.diff_norm(x.reshape(B * N, C, H, W)).view(B, N, C, H, W)
+        x_r = x_n[:, ref]
+        d = x_n - x_r.unsqueeze(1)
+        pair = torch.cat([x_n, x_r.unsqueeze(1).expand(B, N, C, H, W)], dim=2)
+        g = torch.sigmoid(self.gate_conv(pair.reshape(B * N, 2 * C, H, W))).view(B, N, C, H, W)
+        return self.diff_fuse((g * d).sum(dim=1))
 
 class RefinementBlock(nn.Module):
     def __init__(self,
