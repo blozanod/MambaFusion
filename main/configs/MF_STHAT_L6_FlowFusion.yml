@@ -1,0 +1,227 @@
+# MF_STHAT_L6_FlowFusion — flow-guided alignment + signed fusion, 100k.
+#
+# Changes under test vs. MF_STHAT_L5_BayerSpace (which ran 100k at 38.21 dB).
+# Proposal A (alignment range) and Proposal B (let fusion subtract) ship
+# together; the diagnostics localised the gap to both, and they are in
+# different files, so a single run still attributes cleanly per-module.
+#
+# A. BurstAlign is now a flow pyramid rather than a 2-level PCD stack:
+#      1. A third pyramid level. Alignment runs at 96x96 (Bayer), so lv3 sits
+#         at 24x24 where 1 px = 16 GT px. Mean inter-frame translation of
+#         12 GT px is 0.75 px there and the 24 GT px tail is 1.5 px — inside
+#         the band where a displacement gradient still points somewhere.
+#      2. A correlation flow head at lv3. A cost volume evaluates every
+#         candidate displacement instead of descending a gradient toward one.
+#         offset_r = 2 covers +/-32 GT px, comfortably past the 24 GT px max.
+#      3. Coarse-to-fine composition happens in *pixel units*, not in packed
+#         DCN offset channels. L5 propagated offsets by upsampling the packed
+#         [dx, dy, mask] tensor and scaling it with a hand-built index buffer
+#         that assumed a (dx, dy, mask)-per-kernel-point layout; DCNv4's CUDA
+#         kernel actually blocks per group as [K*2 offsets | K masks]
+#         (DCNv4_op/src/cuda/dcnv4_im2col_cuda.cuh:44,113-124,170), so that
+#         propagation doubled 6 of 9 mask channels per group and scaled only
+#         12 of 18 offset channels. Flow in pixels sidesteps the layout
+#         entirely; the one place that still needs it is scatter_flow, whose
+#         index buffers now match the kernel.
+#      4. One DCN at the end, in BasicVSR++ single-interpolation form: the
+#         residual offset is predicted from flow-warped features, but the DCN
+#         samples the *original* features with the flow folded into its
+#         offsets. Exactly one resampling, so sub-pixel content survives.
+#
+# B. FusionBlock:
+#      5. Signed values — v = W_v(x_i - x_ref) instead of W_v(x_i). The output
+#         of a softmax-weighted sum lies in the convex hull of its values, so
+#         with unsigned values no frame could ever be subtracted from another
+#         and the block could only ever build a low-pass filter. Free.
+#      6. Back-projection residual (Burstormer BFF), on the attention output.
+#      7. Gated difference arm — sigmoid gates are independent per frame, so
+#         14 frames carrying genuine additive detail no longer have to divide
+#         a fixed softmax budget of 1.0 between them. gamma is zero-init and
+#         per-channel: it is the cleanest ablation signal in the run, and a
+#         gate that grows is the network reporting it wanted the path.
+#
+# Not carried over from the L6 plan, deliberately:
+#   - The MambaIRv2 depths [2,2,2,2] -> [2,2] cut was priced to fund a
+#     +0.416M alignment module. The alignment rewrite came in *under* L5
+#     instead (0.883M -> 0.631M), so the budget already closes at 5.032M and
+#     the cut would be an unforced 1.13M capacity loss. depths stay at
+#     [2,2,2,2]. Verify with `python analysis/param_budget.py <this file>`.
+#   - The second fusion pass (re-query) is not in this run. It costs +0.249M,
+#     which does not fit at 5.03M without taking fusion_depth_s1 to 2, and
+#     stage 1 is the contribution.
+#
+# Budget: 5.032M. PreAlign 3% / BurstAlign 13% / ST-HAT 39% / MambaIRv2 45%.
+#
+# Schedule is identical to L5 — cosine 1e-4 -> 1e-6 over 100k, warmup 2k,
+# effective batch 32 — so the comparison against 38.21 dB is one-variable in
+# the architecture and zero-variable in the recipe. Do not change the
+# effective batch without re-baselining.
+name: MF_STHAT_L6_FlowFusion_100k
+model_type: MambaFusionModel
+scale: 8
+num_gpu: 4
+manual_seed: 42
+find_unused_parameters: false
+
+# Dataset
+datasets:
+  train:
+    name: SyntheticBurst_train
+    type: SyntheticBurstDataset
+    # Zurich RAW-to-RGB canon set root (expects <dataroot>/train/canon/*.jpg)
+    dataroot: /groups/rls/blozanod/MambaFusion/dataset/Zurich-RAW-to-RGB
+    num_frames: 14
+    phase: train
+    scale: 8
+    # 2 (not 4) because the fusion stage runs at 96x96. L6 adds the gated
+    # difference arm, whose gate_conv holds a [B*14, 192, 96, 96] pair tensor
+    # per FusionBlock call — check analysis/shape_check.py before launching.
+    # If it OOMs, go to 1 and raise accumulation_steps to 8; that keeps the
+    # effective batch at 32 and the L5 comparison valid.
+    batch_size_per_gpu: 2
+    num_worker_per_gpu: 6
+    dataset_enlarge_ratio: 1
+    grad_clip_norm: 1
+
+  val:
+    name: SyntheticBurst_val
+    type: SyntheticBurstDataset
+    # Official pre-generated 300-burst val set (expects bursts/ and gt/)
+    dataroot: /groups/rls/blozanod/MambaFusion/dataset/SyntheticBurstVal
+    num_frames: 14
+    phase: val
+    scale: 8
+
+# Network
+network_g:
+  type: MambaFusionNet
+  # General Config
+  global_skip: false
+  pre_align: true
+  num_frames: 14
+  img_size: 48  # packed LR crop; PreAlign doubles it to 96 internally
+  num_feat: 64
+  # Alignment Specific Config
+  offset_groups: 4
+  # lv3 cost-volume radius, in lv3 pixels. On the Bayer grid one lv3 pixel is
+  # 4 alignment px = 16 GT px, so r=2 searches +/-32 GT px against the
+  # protocol's 24 GT px max_translation. Cost is (2r+1)^2 = 25 channels.
+  offset_r: 2
+  # Fusion Specific Config
+  fusion_ws: 8
+  fusion_st_ws: 4
+  fusion_feat: 96
+  fusion_mlp_ratio: 4
+  fusion_heads: 4
+  fusion_overlap: 0.25
+  fusion_depth_s1: 3
+  fusion_depth_s3: 1
+  # MambaIRv2 Specific Config
+  embed_dim: 96
+  upsample_feat: 64
+  d_state: 16
+  scale: 8  # packed-LR -> GT ratio; restoration upsamples by scale // 2
+  depths: [2, 2, 2, 2]
+  num_heads: [4, 4, 4, 4]
+  window_size: 16
+  inner_rank: 32
+  num_tokens: 64
+  convffn_kernel_size: 5
+  mlp_ratio: 2
+  upsampler: 'pixelshuffle'
+  resi_connection: '1conv'
+  is_train: true
+
+# Training
+path:
+  pretrain_network_g: ~
+  strict_load_g: true
+  resume_state: ~
+  experiments_root: ~
+
+train:
+  accumulation_steps: 4  # 2 x 4 GPUs x 4 = effective batch 32, matches L5
+  total_iter: 100000
+  warmup_iter: 2000
+  compand: false  # plain L1 on linear RGB, no mu-law companding
+
+  optim_g:
+    type: AdamW
+    lr: !!float 1e-4
+    weight_decay: 0
+    betas: [0.9, 0.99]
+
+  scheduler:
+    type: CosineAnnealingRestartLR
+    periods: [100000]
+    restart_weights: [1]
+    eta_min: !!float 1e-6
+
+  pixel_opt:
+    type: L1Loss
+    loss_weight: 1.0
+    reduction: mean
+
+  # Alignment flow supervision (PLAN L6 step 8).
+  #
+  # SyntheticBurstDataset already returns flow_vectors at [N, 2, 96, 96] in
+  # LR-RGB coordinates, which after PreAlign is exactly the grid alignment
+  # runs on. The loss is Charbonnier against those flows, averaged over the
+  # levels in flow_levels, each average-pooled from 96x96 to that level and
+  # scaled by the same ratio (x1 / x0.5 / x0.25) — oracle_warp's pattern.
+  #
+  # No sign flip here. flow_vectors and BurstAlign's internal flow share a
+  # convention (content the reference sees at p sits at p - flow(p)); the
+  # negation into DCN offset units happens inside BurstAlign.scatter_flow.
+  # The reference frame is included on purpose: its ground-truth flow is
+  # identically zero, so it is a free "do not move" constraint.
+  flow_opt:
+    type: CharbonnierLoss
+    loss_weight: 1.0
+    reduction: mean
+
+  # Curriculum, not constraint. Ground-truth geometric flow is a proxy: perfect
+  # registration is not necessarily the optimal sampling pattern for SR, and the
+  # network may want to sample slightly off-grid to exploit sub-pixel diversity
+  # or to weight kernel points asymmetrically near occlusions. Early, the proxy
+  # drags the flow head into the right basin, which local gradients cannot do;
+  # late, it would be a constraint on a network that knows better. Piecewise
+  # linear between milestones, flat outside them — duplicate a milestone for a
+  # step schedule instead of a ramp.
+  #
+  # lambda stays on the log as `flow_lambda`, and l_flow is logged whenever
+  # lambda > 0. Once lambda hits 0 the aux flows stop being computed, but the
+  # flow head is still on the gradient path through the DCN offsets, so
+  # find_unused_parameters can stay false.
+  flow_lambda:
+    milestones: [0, 30000, 60000]
+    values: [0.5, 0.1, 0.0]
+
+  flow_levels: [lv1, lv2, lv3]
+
+# Validation
+val:
+  val_freq: 2500
+  save_img: false
+  metrics:
+    psnr_synburst:  # headline: official SyntheticBurst eval (vendored DBSR code)
+      type: calculate_psnr_synburst
+      boundary_ignore: 40
+      better: higher
+    psnr_linear:  # ours, kept alongside
+      type: calculate_psnr_linear
+      crop_border: 40
+      test_y_channel: false
+      better: higher
+    ssim:  # ours (linear-domain SSIM), kept alongside
+      type: calculate_ssim
+      crop_border: 40
+      input_order: CHW  # visuals are [C,H,W]; calculate_ssim defaults to HWC
+      test_y_channel: false
+      better: higher
+
+# Logging
+logger:
+  print_freq: 100
+  save_checkpoint_freq: 5000
+  use_tb_logger: false

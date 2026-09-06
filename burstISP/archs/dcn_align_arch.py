@@ -215,7 +215,14 @@ class BurstAlign(nn.Module):
             x (Tensor): Burst of shape (B, N, C, H, W).
 
         Returns:
-            Tensor: Aligned features of shape (B, N, num_feat, H, W).
+            aligned  (Tensor): aligned features, (B, N, num_feat, H, W).
+            ref1_b   (Tensor): reference-frame lv1 features, (B, num_feat, H, W).
+            flows    (dict):   the estimated flow at each pyramid level, each
+                (B, N, 2, h, w) in that level's own pixel units and in the
+                same sign convention as the generator's ``flow_vectors`` --
+                the content the reference sees at p sits at ``p - flow(p)``.
+                Exposed for the flow-supervision loss and for offset_analysis;
+                the negation into DCN offset units happens in ``scatter_flow``.
         """
         B,N,C,H,W = x.size()
         x_reshaped = x.view(B * N, C, H, W)
@@ -253,4 +260,10 @@ class BurstAlign(nn.Module):
         om = self.offset_proj(off_feat)
         aligned = self.lrelu(self.dcn(feat1, self.scatter_flow(om, flow1b)))
 
-        return aligned.view(B, N, self.num_feat, H, W), ref1_b
+        # Sizes come from the tensors, not from H // 2 ** k: the stride-2
+        # extractors round up on odd inputs, and a view that disagrees by one
+        # pixel would throw rather than degrade.
+        flows = {lvl: f.view(B, N, 2, *f.shape[-2:])
+                 for lvl, f in (('lv3', flow3), ('lv2', flow2), ('lv1', flow1b))}
+
+        return aligned.view(B, N, self.num_feat, H, W), ref1_b, flows
