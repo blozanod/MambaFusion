@@ -75,9 +75,20 @@ datasets:
     scale: 8
     # 2 (not 4) because the fusion stage runs at 96x96. L6 adds the gated
     # difference arm, whose gate_conv holds a [B*14, 192, 96, 96] pair tensor
-    # per FusionBlock call — check analysis/shape_check.py before launching.
-    # If it OOMs, go to 1 and raise accumulation_steps to 8; that keeps the
-    # effective batch at 32 and the L5 comparison valid.
+    # per FusionBlock call.
+    #
+    # MEASURED (analysis/shape_check.py, A10 22.3 GiB): peak 18.31 GiB at this
+    # batch, 82 % of the card. That is tight but should hold: every shape in
+    # this config is fixed (fixed crop, fixed frame count), so the allocator
+    # pattern is stable rather than fragmenting; the model is only 5.03M
+    # parameters, so DDP gradient buckets plus AdamW state add well under
+    # 100 MB on top; and validation runs at batch 1 under no_grad, so the
+    # val pass at every val_freq is far below this peak.
+    #
+    # Cheap insurance against fragmentation over 100k iterations:
+    #   export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+    # If it OOMs anyway, go to 1 and raise accumulation_steps to 8; that keeps
+    # the effective batch at 32 and the L5 comparison valid.
     batch_size_per_gpu: 2
     num_worker_per_gpu: 6
     dataset_enlarge_ratio: 1
