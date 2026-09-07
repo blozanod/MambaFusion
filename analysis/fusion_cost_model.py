@@ -232,6 +232,67 @@ def report(name, c, per_sample_B=None):
               f"{c.act/1024**2/per_sample_B:11.1f}")
 
 
+# ------------------------------------------- restoration head, priced properly
+# After FusionBlock collapses the burst, everything downstream runs at N=1.
+# That is a 14x token discount, and it is what makes reallocating compute from
+# stage 1 into a deeper/wider restoration head so favourable.
+
+def convffn(tok, E, ratio, kf):
+    c = Cost()
+    h = int(E * ratio)
+    c.add('  norm', *layernorm(tok, E), params=2 * E)
+    c.add('  fc1', *linear(tok, E, h), params=E * h + h)
+    c.add('  dwconv', *conv(tok, h, 1, kf), params=h * kf * kf + h)
+    c.add('  act', *elemwise(tok, h))
+    c.add('  fc2', *linear(tok, h, E), params=h * E + E)
+    return c
+
+
+def attentive_layer(B, E, H, W, ws, heads, d_state, ratio, num_tokens,
+                    inner_rank, kf, scan_w=FP32):
+    """One MambaIRv2 AttentiveLayer: window-MHSA + ConvFFN, then ASSM + ConvFFN."""
+    tok = B * H * W
+    nwin = B * (H // ws) * (W // ws)
+    n = ws * ws
+    c = Cost()
+    c.add('norm1', *layernorm(tok, E), params=2 * E)
+    c.add('wqkv', *linear(tok, E, 3 * E), params=E * 3 * E + 3 * E)
+    c.add('qkv', 0, tok * 3 * E * BF16)
+    c.add('q @ k^T', nwin * heads * n * n * (E // heads), 0)
+    c.add('softmax', *softmax_attn(nwin * heads * n * n))
+    c.add('attn @ v', nwin * heads * n * n * (E // heads), 0)
+    c.add('win proj', *linear(tok, E, E), params=E * E + E)
+    c += convffn(tok, E, ratio, kf)
+    c.add('norm3', *layernorm(tok, E), params=2 * E)
+    c += assm(tok, E, d_state, ratio, num_tokens, inner_rank, scan_w)
+    c += convffn(tok, E, ratio, kf)
+    c.add('layer_scale x2', *elemwise(tok, E, 2))
+    c.params += 2 * E + inner_rank * d_state
+    return c
+
+
+def restoration_head(B, E, H, W, depths, ws=16, heads=4, d_state=16, ratio=2,
+                     num_tokens=64, inner_rank=32, kf=5, upsample_feat=64,
+                     upscale=4, scan_w=FP32):
+    """Full MambaIRv2 trunk: sum(depths) AttentiveLayers + tail."""
+    tok = B * H * W
+    c = Cost()
+    for _ in range(sum(depths)):
+        c += attentive_layer(B, E, H, W, ws, heads, d_state, ratio,
+                             num_tokens, inner_rank, kf, scan_w)
+    for _ in depths:                                   # per-ASSB 3x3 + residual
+        c.add('assb conv', *conv(tok, E, E, 3), params=E * E * 9 + E)
+    c.add('conv_after_body', *conv(tok, E, E, 3), params=E * E * 9 + E)
+    c.add('conv_before_upsample', *conv(tok, E, upsample_feat, 3),
+          params=E * upsample_feat * 9 + upsample_feat)
+    uf = upsample_feat
+    for _ in range(int(math.log2(upscale))):
+        c.add('upsample', *conv(tok, uf, 4 * uf, 3), params=uf * 4 * uf * 9 + 4 * uf)
+    c.add('conv_last', *conv(B * (upscale * H) * (upscale * W), uf, 3, 3),
+          params=uf * 3 * 9 + 3)
+    return c
+
+
 # ------------------------------------- rest of the model, for whole-net FLOPs
 # Coarser than the stage-1 blocks above (MACs only, no activation breakdown):
 # these exist to put the SpatioTemporalBlock's share in context and to compare
@@ -424,5 +485,101 @@ def main():
           f"(vs {gb(s1_act):.2f}); the swap recovers proportionally less.")
 
 
+def reallocation():
+    """What a compute budget buys on each side of the FusionBlock collapse.
+
+    Stage 1 runs at N=14; the restoration head runs at N=1. Per AttentiveLayer
+    the head is therefore ~14x cheaper than a stage-1 block of the same width,
+    which is the whole arithmetic behind moving compute downstream.
+    """
+    cfg, B, H = L6, 2, 96
+    print("\n" + "=" * 78)
+    print("RESTORATION HEAD SCALING (N=1, 96x96, window 16, mlp_ratio 2)")
+    print(f"  {'config':<44}{'GMACs/smp':>11}{'act GB':>9}{'params':>10}")
+    for label, E, depths, ds, ws in [
+        ("current: E=96  d=[2,2,2,2]  d_state=16", 96, [2, 2, 2, 2], 16, 16),
+        ("deeper:  E=96  d=[6,6,6,6]  d_state=16", 96, [6, 6, 6, 6], 16, 16),
+        ("wider:   E=180 d=[2,2,2,2]  d_state=16", 180, [2, 2, 2, 2], 16, 16),
+        ("both:    E=180 d=[6,6,6,6]  d_state=16", 180, [6, 6, 6, 6], 16, 16),
+        ("both:    E=180 d=[6,6,6,6]  d_state=64", 180, [6, 6, 6, 6], 64, 16),
+        ("both:    E=180 d=[8,8,8,8]  d_state=64", 180, [8, 8, 8, 8], 64, 16),
+        ("  ^ with window 16 -> 8 (quarters the attn term)", 180, [8, 8, 8, 8], 64, 8),
+    ]:
+        c = restoration_head(B, E, H, H, depths, ws=ws, d_state=ds,
+                             scan_w=BF16)
+        print(f"  {label:<44}{c.macs/1e9/B:11.1f}{gb(c.act):9.2f}"
+              f"{c.params/1e6:9.2f}M")
+
+    print("\n  One stage-1 SpatioTemporalBlock (N=14) = "
+          f"{spatiotemporal_block(B, 14, 96, H, H, 4, 4, 4).macs/1e9/B:.1f} GMACs/sample.")
+    al = attentive_layer(B, 96, H, H, 16, 4, 16, 2, 64, 32, 5, BF16)
+    print(f"  One AttentiveLayer (N=1, E=96)          = {al.macs/1e9/B:.1f} "
+          f"GMACs/sample  ->  1 ST block buys "
+          f"{spatiotemporal_block(B, 14, 96, H, H, 4, 4, 4).macs // al.macs} of them.")
+
+    print("\n" + "=" * 78)
+    print("BURST-SIDE BREAKDOWN (what the 'lean question' path costs today)")
+    parts = whole_model_macs(cfg, B, spatiotemporal_block(B, 14, 96, H, H, 4, 4, 4).macs)
+    burst = ['PreAlign', 'BurstAlign', 'ST-HAT s1 spatial', 'ST-HAT s1 temporal',
+             'ST-HAT s1 spatiotemporal']
+    bt = sum(parts[k] for k in burst)
+    print(f"  {'burst-wide path (N=14)':<44}{bt/1e9/B:11.1f}"
+          f"  = {bt/1e9/B/14:.1f} GMACs per frame")
+    print(f"  {'  BurstMamba burst stream, per frame':<44}{1.3:11.1f}")
+    print(f"  {'collapse (FusionBlock + s2 spatial)':<44}"
+          f"{parts['ST-HAT s2']/1e9/B:11.1f}")
+    print(f"  {'reconstruction (s3 + MambaIRv2)':<44}"
+          f"{(parts['ST-HAT s3'] + parts['MambaIRv2'])/1e9/B:11.1f}")
+    print(f"  {'  BurstMamba keyframe stream':<44}{63.0:11.1f}")
+
+    # Where the 60.3 GMACs of BurstAlign go. The offset machinery -- three
+    # 2F->F->2 refiners, offset_conv_dcn and offset_proj, all at 96x96 x 14
+    # frames -- is 65% of it, spent predicting a displacement field that on
+    # SyntheticBurst is by construction a global affine (the generator draws
+    # translation <= 24 GT px, rotation <= 1 deg, and ships flow_vectors).
+    px, F = B * 14 * H * H, cfg['num_feat']
+    align = [('feat_extractor_lv1', px * 3 * F * F * 9),
+             ('feat_extractor_lv2 (48x48)', (px // 4) * 2 * F * F * 9),
+             ('feat_extractor_lv3 (24x24)', (px // 16) * 2 * F * F * 9),
+             ('offset_conv_lv1 + _casc', px * 2 * (2 * F * F * 9 + F * 2 * 9)),
+             ('offset_conv_lv2 (48x48)', (px // 4) * (2 * F * F * 9 + F * 2 * 9)),
+             ('offset_conv_dcn', px * 2 * F * F * 9),
+             ('offset_proj', px * F * 144 * 9),
+             ('DCNv4 projs + sampling', px * (F * F * 2 + F * 9))]
+    print("\n  BurstAlign internals:")
+    for nm, m in align:
+        print(f"    {nm:<42}{m/1e9/B:9.1f}")
+    off = sum(m for nm, m in align if 'offset' in nm)
+    print(f"    {'-> offset prediction machinery':<42}{off/1e9/B:9.1f}"
+          f"  ({100*off/sum(m for _, m in align):.0f}% of alignment)")
+
+    print("\n" + "=" * 78)
+    print("END-TO-END BUDGETS (GMACs/sample, 48x48 LR, L=14)")
+    st = spatiotemporal_block(B, 14, 96, H, H, 4, 4, 4).macs
+    sp = spatial_block(B, 14, 96, H, H, 8, 4, 4).macs
+    tp = temporal_block(B, 14, 96, H, H, 4, 4).macs
+    head = lambda E, d, ws=16: restoration_head(B, E, H, H, d, ws=ws,
+                                                scan_w=BF16).macs
+    pa, ba, s2 = parts['PreAlign'], parts['BurstAlign'], parts['ST-HAT s2']
+    scen = [
+        ("A. current (L6)",
+         pa + ba + 3 * (sp + tp + st), s2, parts['ST-HAT s3'] + head(96, [2]*4)),
+        ("B. drop ST block, s1 3->1, head [6,6,6,6]",
+         pa + ba + (sp + tp), s2, head(96, [6]*4)),
+        ("C. B + affine correspondence, head E=180",
+         pa + (ba - off) + (sp + tp), s2, head(180, [6]*4)),
+        ("D. C + head depth 8, window 16->8",
+         pa + (ba - off) + (sp + tp), s2, head(180, [8]*4, ws=8)),
+    ]
+    print(f"  {'':<44}{'burst':>8}{'fuse':>7}{'recon':>8}{'total':>8}{'recon%':>8}")
+    for nm, b, f, r in scen:
+        t = b + f + r
+        print(f"  {nm:<44}{b/1e9/B:8.0f}{f/1e9/B:7.0f}{r/1e9/B:8.0f}"
+              f"{t/1e9/B:8.0f}{100*r/t:7.0f}%")
+    print(f"  {'BurstMamba, L=14 (44.51 dB SyntheticSR)':<44}"
+          f"{16.9:8.0f}{0:7.0f}{63.0:8.0f}{79.9:8.0f}{79:7.0f}%")
+
+
 if __name__ == '__main__':
     main()
+    reallocation()
