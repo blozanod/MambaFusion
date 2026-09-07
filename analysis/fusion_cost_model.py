@@ -703,7 +703,56 @@ def flow_fusion_report():
           f"(current 11%, BurstMamba 79%)")
 
 
+def budget_match():
+    """Can the proposed shape fit inside BurstMamba's 79.9 GFLOPs / 21.4M?
+
+    The lever that decides it is resolution, not architecture. MambaFusion runs
+    its restoration head on the Bayer 96x96 grid; BurstMamba runs its backbone
+    at the 48x48 LR input and upsamples at the end. That is 4x the pixels per
+    layer, and it is why 20.6M params at 63 GFLOPs looks unreachable from here:
+    at 96x96 the same FLOPs buy a quarter of the network.
+
+    Alignment and fusion have a reason to be on the fine grid -- sub-pixel
+    motion lives there. Reconstruction does not: a pixel-unshuffle back to
+    48x48 x 4C is lossless, and running the head there is what SwinIR and
+    MambaIRv2 do anyway. Note this partially reverts L5, which moved
+    restoration onto the Bayer grid along with alignment and fusion.
+    """
+    B, N, C, H = 2, 14, 96, 96
+
+    def flow_path(res, F):
+        px = B * N * res * res
+        return (px * F * F * 9 * 3 + (px // 4) * 2 * F * F * 9
+                + (px // 16) * 2 * F * F * 9 + (px // 16) * 25 * 2 * 9
+                + (px // 4) * (2 * F * F * 9 + F * 2 * 9))
+
+    pre = B * N * 24 * 24 * (4 * 64 * 9 + 64 * 4 * 64 * 9)
+    print("\n" + "=" * 78)
+    print("BUDGET MATCH vs BurstMamba (79.9 GFLOPs / 21.4M params)")
+    print(f"  {'':<42}{'GMACs':>8}{'params':>9}{'act GB':>9}")
+    for label, fres, F, it, E, d, ds, hres, up in [
+        ("flow@96 F=64, fuse x3, head@96 E=180", 96, 64, 3, 180, [6]*4, 64, 96, 4),
+        ("flow@96 F=64, fuse x3, head@48 E=180", 96, 64, 3, 180, [6]*4, 64, 48, 8),
+        ("flow@48 F=64, fuse x3, head@48 E=180", 48, 64, 3, 180, [6]*4, 64, 48, 8),
+        ("flow@48 F=32, fuse x3, head@48 E=180", 48, 32, 3, 180, [6]*4, 64, 48, 8),
+        ("flow@48 F=32, fuse x2, head@48 E=180 d8", 48, 32, 2, 180, [8]*4, 64, 48, 8),
+    ]:
+        fl = flow_path(fres, F)
+        fu = flow_fusion(B, N, C, H, H, iters=it, K=1)
+        hd = restoration_head(B, E, hres, hres, d, d_state=ds, scan_w=BF16,
+                              upscale=up)
+        tot = pre + fl + fu.macs + hd.macs
+        print(f"  {label:<42}{tot/1e9/B:8.1f}{(fu.params+hd.params)/1e6:8.1f}M"
+              f"{gb(fu.act + hd.act):9.2f}")
+        split = (f"pre {pre/1e9/B:.1f} + flow {fl/1e9/B:.1f} + "
+                 f"fuse {fu.macs/1e9/B:.1f} + head {hd.macs/1e9/B:.1f}")
+        print(f"    {split}")
+    print(f"  {'current L6':<42}{276.6:8.1f}{5.0:8.1f}M")
+    print(f"  {'BurstMamba L=14 (44.51 dB)':<42}{79.9:8.1f}{21.4:8.1f}M")
+
+
 if __name__ == '__main__':
     main()
     reallocation()
     flow_fusion_report()
+    budget_match()
