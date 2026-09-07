@@ -293,6 +293,68 @@ def restoration_head(B, E, H, W, depths, ws=16, heads=4, d_state=16, ratio=2,
     return c
 
 
+# ------------------------------- flow-indexed recurrent fusion (the proposal)
+# Replaces stage 1's spatial search with correspondence indexing: instead of
+# attending over a ws x ws x N tube to *find* the matching pixel, sample each
+# frame at the flow-predicted location and aggregate along the frame axis only.
+# The reference parameterises the state update (QMambaBSR's QSSM gating), so
+# the scan asks "what do these frames add that the reference lacks?".
+#
+# Two things this makes explicit:
+#   - The frame axis was never the expensive one. TemporalBlock already mixes
+#     N=14 with full attention and its quadratic term is ~0.3 GMACs; the cost
+#     was always the ws^2 * N spatial search. Indexing deletes that search, and
+#     once it is gone, scan vs. attention along N is a wash on cost -- pick the
+#     operator for expressiveness, not FLOPs.
+#   - Everything downstream of the aggregation runs on the reference alone
+#     (N=1), so the FFN and the flow-refinement head cost 1/14 of a stage-1 FFN.
+
+def flow_fusion_iter(B, N, C, H, W, d_state=16, expand=1, K=1, ffn_ratio=2,
+                     refine_flow=True, scan_w=BF16):
+    """One gather -> reference-gated scan -> inject iteration.
+
+    K is the gather neighbourhood: K=1 samples only the flow-predicted point,
+    K=3 samples a 3x3 patch around it, buying back a little search robustness
+    at K^2 the scan length. BurstMamba's Tab. 3 is the warning label here --
+    integer-rounded indexing scored *below* no alignment at all (32.434 vs
+    32.881), so the gather must stay bilinear whatever K is.
+    """
+    tok = B * N * H * W * K * K          # gathered tokens entering the scan
+    ref = B * H * W                      # reference-only tokens
+    d = int(C * expand)
+    dt_rank = math.ceil(d / 16)
+    c = Cost()
+    c.add('grid_sample gather (bilinear)', 0, B * N * H * W * C * BF16
+          + B * N * H * W * 2 * FP32)
+    c.add('diff vs reference', *elemwise(tok, C, 1))
+    c.add('in_proj', *linear(tok, C, d), params=C * d + d)
+    # Delta / B / C come from the reference, not the burst: 1/N the tokens.
+    c.add('ref-gated dt,B,C proj', *linear(ref, C, dt_rank + 2 * d_state),
+          params=C * (dt_rank + 2 * d_state))
+    c.add('dt_proj', *linear(ref, dt_rank, d), params=dt_rank * d + d)
+    c.add('scan over frame axis', 9 * tok * d * d_state, 3 * tok * d * scan_w)
+    c.add('scan (B, C)', 0, 2 * tok * d_state * scan_w)
+    c.add('out_proj', *linear(tok, d, C), params=d * C + C)
+    c.params += d * d_state + d
+    c.add('inject into reference', *elemwise(ref, C, 1))
+    c += mlp(ref, C, ffn_ratio)                     # FFN on the reference only
+    if refine_flow:
+        # Without this the recurrence can only re-weight the same pixels: the
+        # gather locations are identical every iteration, so nothing new can
+        # enter. A 2-channel residual flow head off the per-frame aggregation
+        # error is what makes iteration 2 able to look somewhere else.
+        c.add('flow refine head', *conv(B * N * H * W, C, 2, 3),
+              params=C * 2 * 9 + 2)
+    return c
+
+
+def flow_fusion(B, N, C, H, W, iters=3, **kw):
+    c = Cost()
+    for _ in range(iters):
+        c += flow_fusion_iter(B, N, C, H, W, **kw)
+    return c
+
+
 # ------------------------------------- rest of the model, for whole-net FLOPs
 # Coarser than the stage-1 blocks above (MACs only, no activation breakdown):
 # these exist to put the SpatioTemporalBlock's share in context and to compare
@@ -580,6 +642,68 @@ def reallocation():
           f"{16.9:8.0f}{0:7.0f}{63.0:8.0f}{79.9:8.0f}{79:7.0f}%")
 
 
+def flow_fusion_report():
+    B, N, C, H = 2, 14, 96, 96
+    print("\n" + "=" * 78)
+    print("FLOW-INDEXED RECURRENT FUSION vs ST-HAT STAGE 1")
+    st = spatiotemporal_block(B, N, C, H, H, 4, 4, 4)
+    sp = spatial_block(B, N, C, H, H, 8, 4, 4)
+    tp = temporal_block(B, N, C, H, H, 4, 4)
+    s1m, s1a = 3 * (st.macs + sp.macs + tp.macs), 3 * (st.act + sp.act + tp.act)
+    print(f"  {'':<46}{'GMACs/smp':>11}{'act GB':>9}")
+    print(f"  {'ST-HAT stage 1 (3 x 3 blocks)':<46}{s1m/1e9/B:11.1f}{gb(s1a):9.2f}")
+    for it in (1, 2, 3, 4):
+        c = flow_fusion(B, N, C, H, H, iters=it, K=1)
+        print(f"  {'flow-indexed fusion, K=1, ' + str(it) + ' iterations':<46}"
+              f"{c.macs/1e9/B:11.1f}{gb(c.act):9.2f}")
+    for it in (2, 3):
+        c = flow_fusion(B, N, C, H, H, iters=it, K=3)
+        print(f"  {'flow-indexed fusion, K=3 (3x3 gather), ' + str(it) + ' iters':<46}"
+              f"{c.macs/1e9/B:11.1f}{gb(c.act):9.2f}")
+
+    print("\n  Why the frame axis was never the problem:")
+    for nm, blk, q in [("SpatioTemporalBlock (ws=4)", st,
+                        st.lines[3][1] + st.lines[5][1]),
+                       ("TemporalBlock (N=14 attention)", tp,
+                        tp.lines[3][1] + tp.lines[5][1])]:
+        print(f"    {nm:<44}{blk.macs/1e9/B:8.1f} total, "
+              f"{q/1e9/B:5.2f} of it quadratic ({100*q/blk.macs:.0f}%)")
+
+    print("\n" + "=" * 78)
+    print("END-TO-END: flow-indexed fusion + expanded head")
+    cfg = L6
+    parts = whole_model_macs(cfg, B, st.macs)
+    pa, ba = parts['PreAlign'], parts['BurstAlign']
+    px, F = B * N * H * H, cfg['num_feat']
+    # Keep the flow half of BurstAlign (feature pyramid + cost-volume head),
+    # drop the offset half (offset_conv_lv1/_casc/_dcn, offset_proj, DCN).
+    flow_only = (px * 3 * F * F * 9 + (px // 4) * 2 * F * F * 9
+                 + (px // 16) * 2 * F * F * 9 + (px // 16) * 25 * 2 * 9
+                 + (px // 4) * (2 * F * F * 9 + F * 2 * 9))
+    ff = flow_fusion(B, N, C, H, H, iters=3, K=1)
+    print(f"  {'':<46}{'GMACs/smp':>11}{'act GB':>9}")
+    rows = [
+        ("PreAlign", pa, None),
+        ("BurstAlign, flow head only (offsets deleted)", flow_only, None),
+        ("flow-indexed fusion, 3 iterations", ff.macs, ff.act),
+        ("MambaIRv2 head E=180 d=[6,6,6,6] d_state=64",
+         restoration_head(B, 180, H, H, [6]*4, d_state=64, scan_w=BF16).macs,
+         restoration_head(B, 180, H, H, [6]*4, d_state=64, scan_w=BF16).act),
+    ]
+    tot = sum(m for _, m, _ in rows)
+    for nm, m, a in rows:
+        act = f"{gb(a):9.2f}" if a else f"{'-':>9}"
+        print(f"  {nm:<46}{m/1e9/B:11.1f}{act}")
+    print(f"  {'-' * 66}")
+    print(f"  {'TOTAL':<46}{tot/1e9/B:11.1f}")
+    print(f"  {'current L6':<46}{sum(parts.values())/1e9/B:11.1f}")
+    print(f"  {'BurstMamba L=14 (44.51 dB)':<46}{79.9:11.1f}")
+    rec = rows[3][1]
+    print(f"\n  reconstruction share: {100*rec/tot:.0f}%  "
+          f"(current 11%, BurstMamba 79%)")
+
+
 if __name__ == '__main__':
     main()
     reallocation()
+    flow_fusion_report()
